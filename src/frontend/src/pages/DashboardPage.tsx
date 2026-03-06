@@ -10,7 +10,7 @@ import {
   Truck,
   Wallet,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -24,6 +24,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useActor } from "../hooks/useActor";
 import {
   useGetAllClients,
   useGetAllDieselEntries,
@@ -46,6 +47,7 @@ interface KPICardProps {
   iconBg: string;
   subtitle?: string;
   loading?: boolean;
+  onClick?: () => void;
 }
 
 function KPICard({
@@ -56,9 +58,13 @@ function KPICard({
   iconBg,
   subtitle,
   loading,
+  onClick,
 }: KPICardProps) {
   return (
-    <Card className="border border-border">
+    <Card
+      className={`border border-border transition-all duration-150 ${onClick ? "cursor-pointer hover:shadow-md hover:border-primary/40 hover:-translate-y-0.5" : ""}`}
+      onClick={onClick}
+    >
       <CardContent className="p-5">
         {loading ? (
           <div className="space-y-2">
@@ -77,6 +83,11 @@ function KPICard({
               {subtitle && (
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {subtitle}
+                </p>
+              )}
+              {onClick && (
+                <p className="mt-1 text-[10px] text-primary/70">
+                  Click to view details →
                 </p>
               )}
             </div>
@@ -108,14 +119,55 @@ const MONTH_NAMES = [
   "Dec",
 ];
 
-export default function DashboardPage() {
+type DashboardPage =
+  | "dashboard"
+  | "billing"
+  | "diesel"
+  | "pettycash"
+  | "payments"
+  | "tds"
+  | "reports"
+  | "settings"
+  | "consigners"
+  | "consignees"
+  | "delivery_orders"
+  | "vehicles"
+  | "loading_trips"
+  | "unloading";
+
+interface DashboardPageProps {
+  onNavigate?: (page: DashboardPage) => void;
+}
+
+export default function DashboardPage({ onNavigate }: DashboardPageProps) {
+  const { actor, isFetching } = useActor();
+  // Stagger wave 2 queries by 600ms to reduce simultaneous IC calls on login
+  const [wave2Ready, setWave2Ready] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setWave2Ready(true), 600);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Wave 1 (immediate): most important KPIs
   const tripsQuery = useGetAllTrips();
   const invoicesQuery = useGetAllInvoices();
-  const dieselQuery = useGetAllDieselEntries();
-  const pettyCashQuery = useGetAllPettyCash();
-  const paymentsQuery = useGetAllPayments();
-  const tdsQuery = useGetAllTDSEntries();
-  const clientsQuery = useGetAllClients();
+
+  // Wave 2 (after 600ms): secondary data
+  const dieselQuery = useGetAllDieselEntries({
+    enabled: wave2Ready && !!actor && !isFetching,
+  });
+  const pettyCashQuery = useGetAllPettyCash({
+    enabled: wave2Ready && !!actor && !isFetching,
+  });
+  const paymentsQuery = useGetAllPayments({
+    enabled: wave2Ready && !!actor && !isFetching,
+  });
+  const tdsQuery = useGetAllTDSEntries({
+    enabled: wave2Ready && !!actor && !isFetching,
+  });
+  const clientsQuery = useGetAllClients({
+    enabled: wave2Ready && !!actor && !isFetching,
+  });
 
   const isLoading =
     tripsQuery.isLoading ||
@@ -249,6 +301,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.72 0.18 60)"
           iconBg="oklch(0.72 0.18 60 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("loading_trips") : undefined}
         />
         <KPICard
           title="Total Quantity"
@@ -257,6 +310,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.55 0.18 240)"
           iconBg="oklch(0.55 0.18 240 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("unloading") : undefined}
         />
         <KPICard
           title="Total Billing"
@@ -265,6 +319,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.65 0.16 150)"
           iconBg="oklch(0.65 0.16 150 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("billing") : undefined}
         />
         <KPICard
           title="Diesel Expense"
@@ -273,6 +328,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.65 0.2 300)"
           iconBg="oklch(0.65 0.2 300 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("diesel") : undefined}
         />
         <KPICard
           title="Petty Cash"
@@ -281,6 +337,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.7 0.2 30)"
           iconBg="oklch(0.7 0.2 30 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("pettycash") : undefined}
         />
         <KPICard
           title="Outstanding Payment"
@@ -289,6 +346,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.577 0.245 27.325)"
           iconBg="oklch(0.577 0.245 27.325 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("payments") : undefined}
         />
         <KPICard
           title="TDS Total"
@@ -297,6 +355,7 @@ export default function DashboardPage() {
           iconColor="oklch(0.55 0.18 240)"
           iconBg="oklch(0.55 0.18 240 / 0.1)"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("tds") : undefined}
         />
         <KPICard
           title="Total Revenue"
@@ -308,6 +367,7 @@ export default function DashboardPage() {
           iconBg="oklch(0.65 0.16 150 / 0.1)"
           subtitle="After expenses"
           loading={isLoading}
+          onClick={onNavigate ? () => onNavigate("reports") : undefined}
         />
       </div>
 

@@ -37,13 +37,11 @@ import PettyCashPage from "../pages/PettyCashPage";
 import ReportsPage from "../pages/ReportsPage";
 import SettingsPage from "../pages/SettingsPage";
 import TDSPage from "../pages/TDSPage";
-import TripsPage from "../pages/TripsPage";
 import UnloadingPage from "../pages/UnloadingPage";
 import VehiclesPage from "../pages/VehiclesPage";
 
 type Page =
   | "dashboard"
-  | "trips"
   | "billing"
   | "diesel"
   | "pettycash"
@@ -109,12 +107,6 @@ const navItems: NavItem[] = [
     label: "Unloading",
     icon: PackageCheck,
     ocid: "sidebar.unloading.link",
-  },
-  {
-    id: "trips",
-    label: "Trip Entry (Legacy)",
-    icon: FileText,
-    ocid: "sidebar.trips.link",
   },
   // ---- Finance ----
   {
@@ -208,6 +200,7 @@ interface PageContentProps {
   onRecordUnloading: (trip: LoadingTrip) => void;
   prefillTrip: LoadingTrip | null;
   onPrefillConsumed: () => void;
+  onNavigate: (page: Page) => void;
 }
 
 function PageContent({
@@ -215,12 +208,11 @@ function PageContent({
   onRecordUnloading,
   prefillTrip,
   onPrefillConsumed,
+  onNavigate,
 }: PageContentProps) {
   switch (page) {
     case "dashboard":
-      return <DashboardPage />;
-    case "trips":
-      return <TripsPage />;
+      return <DashboardPage onNavigate={onNavigate} />;
     case "billing":
       return <BillingPage />;
     case "diesel":
@@ -266,7 +258,6 @@ export default function Layout({
 
   const pageLabels: Record<Page, string> = {
     dashboard: "Dashboard",
-    trips: "Trip Entry (Legacy)",
     billing: "Billing",
     diesel: "Diesel Management",
     pettycash: "Petty Cash",
@@ -383,7 +374,7 @@ export default function Layout({
             </p>
           </div>
           {navItems
-            .slice(5, 8)
+            .slice(5, 7)
             .map((item) => renderNavItem(item, currentPage, handleNavigate))}
 
           {/* Section: Finance */}
@@ -396,7 +387,7 @@ export default function Layout({
             </p>
           </div>
           {navItems
-            .slice(8)
+            .slice(7)
             .map((item) => renderNavItem(item, currentPage, handleNavigate))}
         </nav>
 
@@ -485,6 +476,7 @@ export default function Layout({
             onRecordUnloading={handleUnloadTrip}
             prefillTrip={prefillTrip}
             onPrefillConsumed={() => setPrefillTrip(null)}
+            onNavigate={handleNavigate}
           />
         </main>
 

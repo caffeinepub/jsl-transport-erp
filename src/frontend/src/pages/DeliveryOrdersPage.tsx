@@ -42,6 +42,7 @@ import {
   useDeleteDeliveryOrder,
   useGetAllConsigners,
   useGetAllDeliveryOrders,
+  useGetAllLoadingTrips,
   useUpdateDeliveryOrder,
 } from "../hooks/useQueries";
 import { formatDate } from "../utils/format";
@@ -78,6 +79,7 @@ function getDaysUntilExpiry(dateStr: string): number {
 export default function DeliveryOrdersPage() {
   const dosQuery = useGetAllDeliveryOrders();
   const consignersQuery = useGetAllConsigners();
+  const loadingTripsQuery = useGetAllLoadingTrips();
   const createDO = useCreateDeliveryOrder();
   const updateDO = useUpdateDeliveryOrder();
   const deleteDO = useDeleteDeliveryOrder();
@@ -91,6 +93,20 @@ export default function DeliveryOrdersPage() {
 
   const dos = dosQuery.data ?? [];
   const consigners = consignersQuery.data ?? [];
+  const loadingTrips = loadingTripsQuery.data ?? [];
+
+  // Compute dispatched qty directly from loading trips for accurate real-time values
+  const getDispatchedQty = (doId: bigint): number => {
+    return loadingTrips
+      .filter((t) => {
+        try {
+          return BigInt(t.doId.toString()) === BigInt(doId.toString());
+        } catch {
+          return false;
+        }
+      })
+      .reduce((sum, t) => sum + (Number(t.loadingQty) || 0), 0);
+  };
 
   const getConsignerName = (id: bigint) =>
     consigners.find((c) => c.id === id)?.name ?? id.toString();
@@ -288,12 +304,12 @@ export default function DeliveryOrdersPage() {
                       {item.doQty.toFixed(3)} MT
                     </TableCell>
                     <TableCell className="text-xs text-right text-muted-foreground">
-                      {(item.dispatchedQty ?? 0).toFixed(3)} MT
+                      {getDispatchedQty(item.id).toFixed(3)} MT
                     </TableCell>
                     <TableCell className="text-xs text-right">
                       {(() => {
                         const remaining =
-                          item.doQty - (item.dispatchedQty ?? 0);
+                          item.doQty - getDispatchedQty(item.id);
                         const pct = item.doQty > 0 ? remaining / item.doQty : 0;
                         const color =
                           remaining <= 0

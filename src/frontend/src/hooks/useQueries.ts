@@ -88,7 +88,7 @@ export function useDeleteTruck() {
 }
 
 // =================== CLIENTS ===================
-export function useGetAllClients() {
+export function useGetAllClients(options?: { enabled?: boolean }) {
   const { actor, isFetching } = useActor();
   return useQuery<Client[]>({
     queryKey: ["clients"],
@@ -96,7 +96,8 @@ export function useGetAllClients() {
       if (!actor) return [];
       return actor.getAllClients();
     },
-    enabled: !!actor && !isFetching,
+    enabled:
+      options?.enabled !== undefined ? options.enabled : !!actor && !isFetching,
   });
 }
 
@@ -337,7 +338,7 @@ export function useDeleteInvoice() {
 }
 
 // =================== DIESEL ===================
-export function useGetAllDieselEntries() {
+export function useGetAllDieselEntries(options?: { enabled?: boolean }) {
   const { actor, isFetching } = useActor();
   return useQuery<DieselEntry[]>({
     queryKey: ["diesel"],
@@ -345,7 +346,8 @@ export function useGetAllDieselEntries() {
       if (!actor) return [];
       return actor.getAllDieselEntries();
     },
-    enabled: !!actor && !isFetching,
+    enabled:
+      options?.enabled !== undefined ? options.enabled : !!actor && !isFetching,
   });
 }
 
@@ -416,7 +418,7 @@ export function useDeleteDieselEntry() {
 }
 
 // =================== PETTY CASH ===================
-export function useGetAllPettyCash() {
+export function useGetAllPettyCash(options?: { enabled?: boolean }) {
   const { actor, isFetching } = useActor();
   return useQuery<PettyCash[]>({
     queryKey: ["pettycash"],
@@ -424,7 +426,8 @@ export function useGetAllPettyCash() {
       if (!actor) return [];
       return actor.getAllPettyCashEntries();
     },
-    enabled: !!actor && !isFetching,
+    enabled:
+      options?.enabled !== undefined ? options.enabled : !!actor && !isFetching,
   });
 }
 
@@ -491,7 +494,7 @@ export function useDeletePettyCash() {
 }
 
 // =================== PAYMENTS ===================
-export function useGetAllPayments() {
+export function useGetAllPayments(options?: { enabled?: boolean }) {
   const { actor, isFetching } = useActor();
   return useQuery<Payment[]>({
     queryKey: ["payments"],
@@ -499,7 +502,8 @@ export function useGetAllPayments() {
       if (!actor) return [];
       return actor.getAllPayments();
     },
-    enabled: !!actor && !isFetching,
+    enabled:
+      options?.enabled !== undefined ? options.enabled : !!actor && !isFetching,
   });
 }
 
@@ -570,7 +574,7 @@ export function useDeletePayment() {
 }
 
 // =================== TDS ===================
-export function useGetAllTDSEntries() {
+export function useGetAllTDSEntries(options?: { enabled?: boolean }) {
   const { actor, isFetching } = useActor();
   return useQuery<TDSEntry[]>({
     queryKey: ["tds"],
@@ -578,7 +582,8 @@ export function useGetAllTDSEntries() {
       if (!actor) return [];
       return actor.getAllTDSEntries();
     },
-    enabled: !!actor && !isFetching,
+    enabled:
+      options?.enabled !== undefined ? options.enabled : !!actor && !isFetching,
   });
 }
 
@@ -771,16 +776,22 @@ function nextId<T extends { id: bigint }>(items: T[]): bigint {
   return items.reduce((max, item) => (item.id > max ? item.id : max), 0n) + 1n;
 }
 
+/** Robust BigInt equality that handles both BigInt and Number (post-JSON-parse) */
+function bigIntEq(a: bigint | number, b: bigint | number): boolean {
+  try {
+    return BigInt(a.toString()) === BigInt(b.toString());
+  } catch {
+    return false;
+  }
+}
+
 // =================== CONSIGNER HOOKS ===================
 export function useGetAllConsigners() {
-  const { actor, isFetching } = useActor();
   return useQuery<Consigner[]>({
     queryKey: ["consigners"],
-    queryFn: async () => {
-      if (!actor && isFetching) return [];
-      return loadFromStorage<Consigner>("jt_consigners");
-    },
-    enabled: !isFetching,
+    queryFn: async () => loadFromStorage<Consigner>("jt_consigners"),
+    // Local storage — no actor needed, always enabled
+    staleTime: 0,
   });
 }
 
@@ -828,11 +839,11 @@ export function useDeleteConsigner() {
 
 // =================== CONSIGNEE HOOKS ===================
 export function useGetAllConsignees() {
-  const { isFetching } = useActor();
   return useQuery<Consignee[]>({
     queryKey: ["consignees"],
     queryFn: async () => loadFromStorage<Consignee>("jt_consignees"),
-    enabled: !isFetching,
+    // Local storage — no actor needed, always enabled
+    staleTime: 0,
   });
 }
 
@@ -882,17 +893,19 @@ export function useDeleteConsignee() {
 
 // =================== DELIVERY ORDER HOOKS ===================
 export function useGetAllDeliveryOrders() {
-  const { isFetching } = useActor();
   return useQuery<DeliveryOrder[]>({
     queryKey: ["deliveryOrders"],
     queryFn: async () => {
       const items = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
       return items.map((item) => ({
         ...item,
-        dispatchedQty: item.dispatchedQty ?? 0,
+        dispatchedQty:
+          typeof item.dispatchedQty === "number" ? item.dispatchedQty : 0,
+        doQty:
+          typeof item.doQty === "number" ? item.doQty : Number(item.doQty) || 0,
       }));
     },
-    enabled: !isFetching,
+    staleTime: 0,
   });
 }
 
@@ -947,11 +960,11 @@ export function useDeleteDeliveryOrder() {
 
 // =================== VEHICLE HOOKS ===================
 export function useGetAllVehicles() {
-  const { isFetching } = useActor();
   return useQuery<Vehicle[]>({
     queryKey: ["vehicles"],
     queryFn: async () => loadFromStorage<Vehicle>("jt_vehicles"),
-    enabled: !isFetching,
+    // Local storage — no actor needed, always enabled
+    staleTime: 0,
   });
 }
 
@@ -998,11 +1011,10 @@ export function useDeleteVehicle() {
 
 // =================== LOADING TRIP HOOKS ===================
 export function useGetAllLoadingTrips() {
-  const { isFetching } = useActor();
   return useQuery<LoadingTrip[]>({
     queryKey: ["loadingTrips"],
     queryFn: async () => loadFromStorage<LoadingTrip>("jt_loading_trips"),
-    enabled: !isFetching,
+    staleTime: 0,
   });
 }
 
@@ -1024,7 +1036,7 @@ export function useCreateLoadingTrip() {
         saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
-            d.id === data.doId
+            bigIntEq(d.id, data.doId)
               ? {
                   ...d,
                   dispatchedQty: (d.dispatchedQty ?? 0) + data.loadingQty,
@@ -1038,6 +1050,7 @@ export function useCreateLoadingTrip() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
       queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.refetchQueries({ queryKey: ["deliveryOrders"] });
     },
   });
 }
@@ -1047,14 +1060,14 @@ export function useUpdateLoadingTrip() {
   return useMutation({
     mutationFn: async (data: LoadingTrip) => {
       const items = loadFromStorage<LoadingTrip>("jt_loading_trips");
-      const old = items.find((i) => i.id === data.id);
+      const old = items.find((i) => bigIntEq(i.id, data.id));
       // Reverse old deduction
       if (old && old.doId !== 0n) {
         const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
         saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
-            d.id === old.doId
+            bigIntEq(d.id, old.doId)
               ? {
                   ...d,
                   dispatchedQty: Math.max(
@@ -1072,7 +1085,7 @@ export function useUpdateLoadingTrip() {
         saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
-            d.id === data.doId
+            bigIntEq(d.id, data.doId)
               ? {
                   ...d,
                   dispatchedQty: (d.dispatchedQty ?? 0) + data.loadingQty,
@@ -1083,12 +1096,13 @@ export function useUpdateLoadingTrip() {
       }
       saveToStorage(
         "jt_loading_trips",
-        items.map((i) => (i.id === data.id ? data : i)),
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
       queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.refetchQueries({ queryKey: ["deliveryOrders"] });
     },
   });
 }
@@ -1098,14 +1112,14 @@ export function useDeleteLoadingTrip() {
   return useMutation({
     mutationFn: async (id: bigint) => {
       const items = loadFromStorage<LoadingTrip>("jt_loading_trips");
-      const trip = items.find((i) => i.id === id);
+      const trip = items.find((i) => bigIntEq(i.id, id));
       // Reverse the DO deduction before deleting
       if (trip && trip.doId !== 0n) {
         const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
         saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
-            d.id === trip.doId
+            bigIntEq(d.id, trip.doId)
               ? {
                   ...d,
                   dispatchedQty: Math.max(
@@ -1119,23 +1133,24 @@ export function useDeleteLoadingTrip() {
       }
       saveToStorage(
         "jt_loading_trips",
-        items.filter((i) => i.id !== id),
+        items.filter((i) => !bigIntEq(i.id, id)),
       );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
       queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.refetchQueries({ queryKey: ["deliveryOrders"] });
     },
   });
 }
 
 // =================== UNLOADING HOOKS ===================
 export function useGetAllUnloadings() {
-  const { isFetching } = useActor();
   return useQuery<Unloading[]>({
     queryKey: ["unloadings"],
     queryFn: async () => loadFromStorage<Unloading>("jt_unloadings"),
-    enabled: !isFetching,
+    // Local storage — no actor needed, always enabled
+    staleTime: 0,
   });
 }
 
@@ -1203,6 +1218,10 @@ export function useGetUserProfile() {
       return actor.getCallerUserProfile();
     },
     enabled: !!actor && !isFetching,
+    // Keep profile data fresh for 10 minutes — no need to re-fetch on every page visit
+    staleTime: 10 * 60 * 1000,
+    // Don't refetch on window focus — profile rarely changes
+    refetchOnWindowFocus: false,
   });
 }
 

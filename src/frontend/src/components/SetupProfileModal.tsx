@@ -100,7 +100,7 @@ export default function SetupProfileModal() {
               className="text-center text-xs text-muted-foreground"
               data-ocid="profile.loading_state"
             >
-              Connecting to network...
+              Establishing secure connection to the blockchain...
             </p>
           )}
         </form>

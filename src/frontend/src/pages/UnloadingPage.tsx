@@ -139,6 +139,7 @@ export default function UnloadingPage({
     const challanDeduction = Number(form.challanDeduction) || 200;
     const penalty = Number(form.penalty) || 0;
 
+    const tollCharges = Number(form.tollCharges) || 0;
     const vehicleCost = unloadingQty * bookingRate;
     const clientBillAmount = unloadingQty * billingRate;
     const netPayableToVehicle =
@@ -149,6 +150,7 @@ export default function UnloadingPage({
       gpsDeduction -
       challanDeduction -
       penalty -
+      tollCharges -
       cashTds;
 
     return {
@@ -162,6 +164,7 @@ export default function UnloadingPage({
       advanceCash,
       advanceBank,
       hsdAmount,
+      tollCharges,
     };
   }, [form, trips]);
 
@@ -744,6 +747,12 @@ export default function UnloadingPage({
                     <span className="text-muted-foreground">HSD Amount</span>
                     <span className="font-medium">
                       {fmt(computedValues.hsdAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Toll Charges</span>
+                    <span className="font-medium">
+                      {fmt(computedValues.tollCharges)}
                     </span>
                   </div>
                   <div className="flex justify-between">

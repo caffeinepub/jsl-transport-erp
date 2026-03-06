@@ -9,7 +9,6 @@ import LoginPage from "./pages/LoginPage";
 
 type Page =
   | "dashboard"
-  | "trips"
   | "billing"
   | "diesel"
   | "pettycash"
@@ -26,22 +25,36 @@ type Page =
 
 function AuthenticatedApp() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
-  const { data: userProfile, isLoading: profileLoading } = useGetUserProfile();
+  const {
+    data: userProfile,
+    isLoading: profileLoading,
+    isSuccess: profileLoaded,
+  } = useGetUserProfile();
 
+  // Block rendering only while the query is in-flight for the first time (no data yet)
   if (profileLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground font-medium">
-            Loading JSL Transport ERP...
+            Connecting to Jeen Trade ERP...
+          </p>
+          <p className="text-xs text-muted-foreground opacity-60">
+            This may take a few seconds on first login
           </p>
         </div>
       </div>
     );
   }
 
+  // Query has completed — check if profile exists
+  if (profileLoaded && !userProfile) {
+    return <SetupProfileModal />;
+  }
+
   if (!userProfile) {
+    // Fallback: query not ready yet
     return <SetupProfileModal />;
   }
 
@@ -63,7 +76,10 @@ export default function App() {
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground font-medium">
-            Initializing...
+            Connecting to Internet Computer...
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            This may take a few seconds on first login
           </p>
         </div>
       </div>
