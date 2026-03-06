@@ -26,15 +26,14 @@ import {
 } from "recharts";
 import { useActor } from "../hooks/useActor";
 import {
-  useGetAllClients,
   useGetAllDieselEntries,
-  useGetAllInvoices,
-  useGetAllPayments,
+  useGetAllLoadingTrips,
   useGetAllPettyCash,
+  useGetAllReceivables,
   useGetAllTDSEntries,
-  useGetAllTrips,
+  useGetAllUnloadings,
 } from "../hooks/useQueries";
-import { formatCurrency, formatNumber, getMonthYear } from "../utils/format";
+import { formatCurrency, formatNumber } from "../utils/format";
 
 interface KPICardProps {
   title: string;
@@ -133,7 +132,10 @@ type DashboardPage =
   | "delivery_orders"
   | "vehicles"
   | "loading_trips"
-  | "unloading";
+  | "unloading"
+  | "receivable"
+  | "payable"
+  | "pettycash_ledger";
 
 interface DashboardPageProps {
   onNavigate?: (page: DashboardPage) => void;
@@ -148,42 +150,35 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
     return () => clearTimeout(t);
   }, []);
 
-  // Wave 1 (immediate): most important KPIs
-  const tripsQuery = useGetAllTrips();
-  const invoicesQuery = useGetAllInvoices();
+  // Wave 1 (immediate): primary operational data from localStorage
+  const loadingTripsQuery = useGetAllLoadingTrips();
+  const unloadingsQuery = useGetAllUnloadings();
+  const receivablesQuery = useGetAllReceivables();
 
-  // Wave 2 (after 600ms): secondary data
+  // Wave 2 (after 600ms): secondary data from backend
   const dieselQuery = useGetAllDieselEntries({
     enabled: wave2Ready && !!actor && !isFetching,
   });
   const pettyCashQuery = useGetAllPettyCash({
     enabled: wave2Ready && !!actor && !isFetching,
   });
-  const paymentsQuery = useGetAllPayments({
-    enabled: wave2Ready && !!actor && !isFetching,
-  });
   const tdsQuery = useGetAllTDSEntries({
-    enabled: wave2Ready && !!actor && !isFetching,
-  });
-  const clientsQuery = useGetAllClients({
     enabled: wave2Ready && !!actor && !isFetching,
   });
 
   const isLoading =
-    tripsQuery.isLoading ||
-    invoicesQuery.isLoading ||
+    loadingTripsQuery.isLoading ||
+    unloadingsQuery.isLoading ||
     dieselQuery.isLoading ||
     pettyCashQuery.isLoading ||
-    paymentsQuery.isLoading ||
     tdsQuery.isLoading;
 
-  const trips = tripsQuery.data ?? [];
-  const invoices = invoicesQuery.data ?? [];
+  const loadingTrips = loadingTripsQuery.data ?? [];
+  const unloadings = unloadingsQuery.data ?? [];
+  const receivables = receivablesQuery.data ?? [];
   const diesel = dieselQuery.data ?? [];
   const pettyCash = pettyCashQuery.data ?? [];
-  const payments = paymentsQuery.data ?? [];
   const tds = tdsQuery.data ?? [];
-  const clients = clientsQuery.data ?? [];
 
   const currentMonthStr = useMemo(() => {
     const now = new Date();
@@ -191,18 +186,41 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
   }, []);
 
   const kpis = useMemo(() => {
-    const monthTrips = trips.filter((t) =>
+    // Total Trips this month — from loading trips by loadingDate
+    const monthTrips = loadingTrips.filter((t) =>
       t.loadingDate?.startsWith(currentMonthStr),
     );
     const totalTrips = monthTrips.length;
-    const totalQty = monthTrips.reduce((s, t) => s + t.loadingQty, 0);
-    const totalBilling = invoices.reduce((s, i) => s + i.totalInvoice, 0);
-    const totalDiesel = diesel.reduce((s, d) => s + d.total, 0);
-    const totalPettyCash = pettyCash.reduce((s, p) => s + p.amount, 0);
-    const outstanding = payments
-      .filter((p) => p.paymentStatus !== "paid")
-      .reduce((s, p) => s + p.balance, 0);
-    const totalTds = tds.reduce((s, t) => s + t.tdsAmount, 0);
+
+    // Total Quantity — sum of unloadingQty from all unloading records
+    const totalQty = unloadings.reduce(
+      (s, u) => s + (Number(u.unloadingQty) || 0),
+      0,
+    );
+
+    // Total Billing — sum of clientBillAmount from unloading records
+    const totalBilling = unloadings.reduce(
+      (s, u) => s + (Number(u.clientBillAmount) || 0),
+      0,
+    );
+
+    // Diesel expense
+    const totalDiesel = diesel.reduce((s, d) => s + (Number(d.total) || 0), 0);
+
+    // Petty cash
+    const totalPettyCash = pettyCash.reduce(
+      (s, p) => s + (Number(p.amount) || 0),
+      0,
+    );
+
+    // Outstanding receivables (unpaid balance)
+    const outstanding = receivables
+      .filter((r) => r.status !== "paid")
+      .reduce((s, r) => s + (Number(r.balance) || 0), 0);
+
+    // TDS total
+    const totalTds = tds.reduce((s, t) => s + (Number(t.tdsAmount) || 0), 0);
+
     return {
       totalTrips,
       totalQty,
@@ -212,73 +230,84 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
       outstanding,
       totalTds,
     };
-  }, [trips, invoices, diesel, pettyCash, payments, tds, currentMonthStr]);
+  }, [
+    loadingTrips,
+    unloadings,
+    receivables,
+    diesel,
+    pettyCash,
+    tds,
+    currentMonthStr,
+  ]);
 
-  // Monthly revenue chart data
+  // Monthly revenue chart — use loadingDate from loading trips to bucket clientBillAmount
   const monthlyRevenueData = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const inv of invoices) {
-      // Use trip to get date - we'll approximate with invoice id order
-      const month = getMonthYear(
-        new Date(Date.now() - Number(inv.id) * 86400000).toISOString(),
-      );
-      map[month] = (map[month] ?? 0) + inv.totalInvoice;
+    // Build a map of loadingTrip.id -> loadingDate
+    const tripDateMap: Record<string, string> = {};
+    for (const trip of loadingTrips) {
+      tripDateMap[trip.id.toString()] = trip.loadingDate ?? "";
     }
+
+    // Sum clientBillAmount by month using the trip's loading date
+    const map: Record<string, number> = {};
+    for (const u of unloadings) {
+      const tripDate = tripDateMap[u.loadingTripId.toString()];
+      if (!tripDate) continue;
+      const d = new Date(tripDate);
+      if (Number.isNaN(d.getTime())) continue;
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      map[monthKey] = (map[monthKey] ?? 0) + (Number(u.clientBillAmount) || 0);
+    }
+
     // Generate last 6 months
     const result: { month: string; revenue: number }[] = [];
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const label = `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear().toString().slice(2)}`;
-      const monthKey = getMonthYear(d.toISOString());
       result.push({ month: label, revenue: map[monthKey] ?? 0 });
     }
-    // Distribute invoices across months for better visualization
-    if (invoices.length > 0 && result.every((r) => r.revenue === 0)) {
-      const perMonth = Math.floor(invoices.length / 6);
-      let idx = 0;
-      for (let i = 0; i < result.length; i++) {
-        const count =
-          i === result.length - 1 ? invoices.length - idx : perMonth;
-        result[i].revenue = invoices
-          .slice(idx, idx + count)
-          .reduce((s, inv) => s + inv.totalInvoice, 0);
-        idx += count;
-      }
-    }
     return result;
-  }, [invoices]);
+  }, [unloadings, loadingTrips]);
 
   // Expense pie chart data
   const expenseData = useMemo(() => {
-    const dieselTotal = diesel.reduce((s, d) => s + d.total, 0);
-    const pettyTotal = pettyCash.reduce((s, p) => s + p.amount, 0);
+    const dieselTotal = diesel.reduce((s, d) => s + (Number(d.total) || 0), 0);
+    const pettyTotal = pettyCash.reduce(
+      (s, p) => s + (Number(p.amount) || 0),
+      0,
+    );
     return [
       { name: "Diesel", value: dieselTotal, color: "#f59e0b" },
       { name: "Petty Cash", value: pettyTotal, color: "#6366f1" },
     ].filter((d) => d.value > 0);
   }, [diesel, pettyCash]);
 
-  // Client revenue chart data
-  const clientRevenueData = useMemo(() => {
-    const tripClientMap: Record<string, bigint> = {};
-    for (const trip of trips) {
-      tripClientMap[trip.id.toString()] = trip.clientId;
+  // Vehicle-wise billing chart (top 6 vehicles by total clientBillAmount)
+  const vehicleBillingData = useMemo(() => {
+    // Build loadingTrip id -> vehicleId map
+    const tripVehicleMap: Record<string, bigint> = {};
+    for (const trip of loadingTrips) {
+      tripVehicleMap[trip.id.toString()] = trip.vehicleId;
     }
-    const clientMap: Record<string, number> = {};
-    for (const inv of invoices) {
-      const clientId = tripClientMap[inv.tripId.toString()];
-      if (clientId !== undefined) {
-        const client = clients.find((c) => c.id === clientId);
-        const name = client?.clientName ?? `Client ${clientId}`;
-        clientMap[name] = (clientMap[name] ?? 0) + inv.totalInvoice;
+    const vehicleMap: Record<string, number> = {};
+    for (const u of unloadings) {
+      const vehicleId = tripVehicleMap[u.loadingTripId.toString()];
+      if (vehicleId !== undefined) {
+        const key = vehicleId.toString();
+        vehicleMap[key] =
+          (vehicleMap[key] ?? 0) + (Number(u.clientBillAmount) || 0);
       }
     }
-    return Object.entries(clientMap)
-      .map(([name, revenue]) => ({ name, revenue }))
+    return Object.entries(vehicleMap)
+      .map(([vehicleId, revenue]) => ({
+        name: `V-${vehicleId}`,
+        revenue,
+      }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 6);
-  }, [invoices, trips, clients]);
+  }, [unloadings, loadingTrips]);
 
   return (
     <div className="p-6 space-y-6" data-ocid="dashboard.page">
@@ -340,13 +369,13 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
           onClick={onNavigate ? () => onNavigate("pettycash") : undefined}
         />
         <KPICard
-          title="Outstanding Payment"
+          title="Outstanding Receivable"
           value={formatCurrency(kpis.outstanding)}
           icon={AlertCircle}
           iconColor="oklch(0.577 0.245 27.325)"
           iconBg="oklch(0.577 0.245 27.325 / 0.1)"
           loading={isLoading}
-          onClick={onNavigate ? () => onNavigate("payments") : undefined}
+          onClick={onNavigate ? () => onNavigate("receivable") : undefined}
         />
         <KPICard
           title="TDS Total"
@@ -358,14 +387,14 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
           onClick={onNavigate ? () => onNavigate("tds") : undefined}
         />
         <KPICard
-          title="Total Revenue"
+          title="Net Revenue"
           value={formatCurrency(
             kpis.totalBilling - kpis.totalDiesel - kpis.totalPettyCash,
           )}
           icon={TrendingUp}
           iconColor="oklch(0.65 0.16 150)"
           iconBg="oklch(0.65 0.16 150 / 0.1)"
-          subtitle="After expenses"
+          subtitle="After diesel & petty cash"
           loading={isLoading}
           onClick={onNavigate ? () => onNavigate("reports") : undefined}
         />
@@ -377,7 +406,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
         <Card className="lg:col-span-2 border border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold font-display">
-              Monthly Revenue
+              Monthly Billing (Client Bill Amount)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -405,7 +434,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
                   <Tooltip
                     formatter={(value: number) => [
                       formatCurrency(value),
-                      "Revenue",
+                      "Client Bill",
                     ]}
                     contentStyle={{
                       background: "white",
@@ -483,12 +512,12 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
         </Card>
       </div>
 
-      {/* Client Revenue Chart */}
-      {clientRevenueData.length > 0 && (
+      {/* Vehicle-wise Billing Chart */}
+      {vehicleBillingData.length > 0 && (
         <Card className="border border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold font-display">
-              Client-wise Revenue
+              Vehicle-wise Billing
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -497,7 +526,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart
-                  data={clientRevenueData}
+                  data={vehicleBillingData}
                   margin={{ top: 5, right: 10, left: -10, bottom: 5 }}
                 >
                   <CartesianGrid
@@ -516,7 +545,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
                   <Tooltip
                     formatter={(value: number) => [
                       formatCurrency(value),
-                      "Revenue",
+                      "Client Bill",
                     ]}
                     contentStyle={{
                       background: "white",

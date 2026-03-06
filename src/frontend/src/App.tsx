@@ -21,7 +21,10 @@ type Page =
   | "delivery_orders"
   | "vehicles"
   | "loading_trips"
-  | "unloading";
+  | "unloading"
+  | "receivable"
+  | "payable"
+  | "pettycash_ledger";
 
 function AuthenticatedApp() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");

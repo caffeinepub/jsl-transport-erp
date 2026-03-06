@@ -105,7 +105,7 @@ export default function UnloadingPage({
       ...defaultForm,
       loadingTripId: prefillTrip.id.toString(),
       bookingRate: consigner ? consigner.nonAssociationRate.toString() : "",
-      billingRate: consigner ? consigner.associationRate.toString() : "",
+      billingRate: consigner ? consigner.billingRate.toString() : "",
     });
     setDialogOpen(true);
     onPrefillConsumed?.();
@@ -202,7 +202,7 @@ export default function UnloadingPage({
           ? consigner.nonAssociationRate.toString()
           : p.bookingRate,
         billingRate: consigner
-          ? consigner.associationRate.toString()
+          ? consigner.billingRate.toString()
           : p.billingRate,
       }));
     } else {
@@ -581,7 +581,7 @@ export default function UnloadingPage({
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="ul-billing" className="text-xs">
-                    Billing Rate (to client — Association)
+                    Billing Rate (Jeen Trade → Client Invoice)
                   </Label>
                   <Input
                     id="ul-billing"

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
+  BookOpen,
   Building2,
   ChevronRight,
   CreditCard,
@@ -17,6 +18,8 @@ import {
   PackageCheck,
   Receipt,
   Settings,
+  TrendingDown,
+  TrendingUp,
   Truck,
   Wallet,
   X,
@@ -32,8 +35,11 @@ import DashboardPage from "../pages/DashboardPage";
 import DeliveryOrdersPage from "../pages/DeliveryOrdersPage";
 import DieselPage from "../pages/DieselPage";
 import LoadingTripsPage from "../pages/LoadingTripsPage";
+import PayablePage from "../pages/PayablePage";
 import PaymentsPage from "../pages/PaymentsPage";
+import PettyCashLedgerPage from "../pages/PettyCashLedgerPage";
 import PettyCashPage from "../pages/PettyCashPage";
+import ReceivablePage from "../pages/ReceivablePage";
 import ReportsPage from "../pages/ReportsPage";
 import SettingsPage from "../pages/SettingsPage";
 import TDSPage from "../pages/TDSPage";
@@ -54,7 +60,10 @@ type Page =
   | "delivery_orders"
   | "vehicles"
   | "loading_trips"
-  | "unloading";
+  | "unloading"
+  | "receivable"
+  | "payable"
+  | "pettycash_ledger";
 
 interface NavItem {
   id: Page;
@@ -129,6 +138,24 @@ const navItems: NavItem[] = [
     ocid: "sidebar.payments.link",
   },
   { id: "tds", label: "TDS", icon: Receipt, ocid: "sidebar.tds.link" },
+  {
+    id: "receivable",
+    label: "Receivable",
+    icon: TrendingUp,
+    ocid: "sidebar.receivable.link",
+  },
+  {
+    id: "payable",
+    label: "Payable",
+    icon: TrendingDown,
+    ocid: "sidebar.payable.link",
+  },
+  {
+    id: "pettycash_ledger",
+    label: "Cash Ledger",
+    icon: BookOpen,
+    ocid: "sidebar.pettycash_ledger.link",
+  },
   {
     id: "reports",
     label: "Reports",
@@ -244,6 +271,12 @@ function PageContent({
           onPrefillConsumed={onPrefillConsumed}
         />
       );
+    case "receivable":
+      return <ReceivablePage />;
+    case "payable":
+      return <PayablePage />;
+    case "pettycash_ledger":
+      return <PettyCashLedgerPage />;
   }
 }
 
@@ -271,6 +304,9 @@ export default function Layout({
     vehicles: "Fleet / Vehicles",
     loading_trips: "Loading Trips",
     unloading: "Unloading Records",
+    receivable: "Accounts Receivable",
+    payable: "Accounts Payable",
+    pettycash_ledger: "Petty Cash Ledger",
   };
 
   const handleNavigate = (page: Page) => {

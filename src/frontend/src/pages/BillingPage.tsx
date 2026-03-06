@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -25,41 +24,40 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
-import {
-  CheckSquare,
-  Loader2,
-  Pencil,
-  Plus,
-  Printer,
-  Trash2,
-  Truck,
-} from "lucide-react";
-import { useState } from "react";
+import { FileText, Loader2, Pencil, Plus, Printer, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   type Invoice,
   useCreateInvoice,
   useDeleteInvoice,
+  useGetAllConsignees,
+  useGetAllConsigners,
   useGetAllInvoices,
-  useGetAllTrips,
-  useGetAllTrucks,
+  useGetAllLoadingTrips,
+  useGetAllUnloadings,
+  useGetAllVehicles,
   useUpdateInvoice,
 } from "../hooks/useQueries";
-import { formatCurrency } from "../utils/format";
+import { formatCurrency, formatDate } from "../utils/format";
 
 interface InvoiceFormData {
-  tripId: string;
-  rate: string;
+  unloadingId: string;
   gstPercent: string;
   status: string;
+  // auto-filled from unloading
+  billingRate: number;
+  unloadingQty: number;
+  clientBillAmount: number;
 }
 
 const defaultForm: InvoiceFormData = {
-  tripId: "",
-  rate: "",
+  unloadingId: "",
   gstPercent: "18",
   status: "draft",
+  billingRate: 0,
+  unloadingQty: 0,
+  clientBillAmount: 0,
 };
 
 function getStatusClass(status: string) {
@@ -75,8 +73,11 @@ function getStatusClass(status: string) {
 
 export default function BillingPage() {
   const invoicesQuery = useGetAllInvoices();
-  const tripsQuery = useGetAllTrips();
-  const trucksQuery = useGetAllTrucks();
+  const unloadingsQuery = useGetAllUnloadings();
+  const loadingTripsQuery = useGetAllLoadingTrips();
+  const vehiclesQuery = useGetAllVehicles();
+  const consignersQuery = useGetAllConsigners();
+  const consigneesQuery = useGetAllConsignees();
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const deleteInvoice = useDeleteInvoice();
@@ -85,40 +86,67 @@ export default function BillingPage() {
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [form, setForm] = useState<InvoiceFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<Invoice | null>(null);
-  const [selectedTruckIds, setSelectedTruckIds] = useState<Set<string>>(
-    new Set(),
-  );
 
   const invoices = invoicesQuery.data ?? [];
-  const trips = tripsQuery.data ?? [];
-  const trucks = trucksQuery.data ?? [];
+  const unloadings = unloadingsQuery.data ?? [];
+  const loadingTrips = loadingTripsQuery.data ?? [];
+  const vehicles = vehiclesQuery.data ?? [];
+  const consigners = consignersQuery.data ?? [];
+  const consignees = consigneesQuery.data ?? [];
 
-  const toggleTruckSelection = (truckId: string) => {
-    setSelectedTruckIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(truckId)) {
-        next.delete(truckId);
-      } else {
-        next.add(truckId);
-      }
-      return next;
-    });
+  // Build enriched unloading list for selector
+  const enrichedUnloadings = useMemo(
+    () =>
+      unloadings.map((u) => {
+        const trip = loadingTrips.find(
+          (t) =>
+            t.id === u.loadingTripId ||
+            Number(t.id) === Number(u.loadingTripId),
+        );
+        const vehicleNum = trip
+          ? (vehicles.find(
+              (v) =>
+                v.id === trip.vehicleId ||
+                Number(v.id) === Number(trip.vehicleId),
+            )?.vehicleNumber ?? "—")
+          : "—";
+        const consignerName = trip
+          ? (consigners.find(
+              (c) =>
+                c.id === trip.consignerId ||
+                Number(c.id) === Number(trip.consignerId),
+            )?.name ?? "—")
+          : "—";
+        const consigneeName = trip
+          ? (consignees.find(
+              (c) =>
+                c.id === trip.consigneeId ||
+                Number(c.id) === Number(trip.consigneeId),
+            )?.name ?? "—")
+          : "—";
+        return {
+          ...u,
+          tripId: trip?.tripId ?? `LT-${u.loadingTripId}`,
+          vehicleNum,
+          consignerName,
+          consigneeName,
+          loadingDate: trip?.loadingDate ?? "",
+        };
+      }),
+    [unloadings, loadingTrips, vehicles, consigners, consignees],
+  );
+
+  // Get enriched unloading for a given unloadingId stored in invoice's tripId field
+  const getEnrichedForInvoice = (inv: Invoice) => {
+    // invoices store unloadingId in tripId field (BigInt)
+    const uId = Number(inv.tripId);
+    return enrichedUnloadings.find((u) => Number(u.id) === uId);
   };
 
-  // Filter trips based on selected trucks — if none selected, show all
-  const filteredTrips =
-    selectedTruckIds.size === 0
-      ? trips
-      : trips.filter((t) => selectedTruckIds.has(t.truckId.toString()));
-
-  // Find trip for form
-  const selectedTrip = trips.find((t) => t.id.toString() === form.tripId);
-  const loadingQty = selectedTrip?.loadingQty ?? 0;
-  const rate = Number(form.rate || 0);
-  const billingAmount = loadingQty * rate;
+  // Computed values for form
   const gstPercent = Number(form.gstPercent || 0);
-  const gstAmount = billingAmount * (gstPercent / 100);
-  const totalInvoice = billingAmount + gstAmount;
+  const gstAmount = form.clientBillAmount * (gstPercent / 100);
+  const totalInvoice = form.clientBillAmount + gstAmount;
 
   const openCreateDialog = () => {
     setEditingInvoice(null);
@@ -128,21 +156,47 @@ export default function BillingPage() {
 
   const openEditDialog = (inv: Invoice) => {
     setEditingInvoice(inv);
+    const eu = getEnrichedForInvoice(inv);
     setForm({
-      tripId: inv.tripId.toString(),
-      rate: inv.rate.toString(),
+      unloadingId: inv.tripId.toString(),
       gstPercent: inv.gstPercent.toString(),
       status: inv.status,
+      billingRate: eu?.billingRate ?? inv.rate,
+      unloadingQty: eu?.unloadingQty ?? 0,
+      clientBillAmount: eu?.clientBillAmount ?? inv.billingAmount,
     });
     setDialogOpen(true);
+  };
+
+  const handleUnloadingSelect = (unloadingIdStr: string) => {
+    const u = enrichedUnloadings.find(
+      (x) => x.id.toString() === unloadingIdStr,
+    );
+    if (u) {
+      setForm((p) => ({
+        ...p,
+        unloadingId: unloadingIdStr,
+        billingRate: u.billingRate,
+        unloadingQty: u.unloadingQty,
+        clientBillAmount: u.clientBillAmount,
+      }));
+    } else {
+      setForm((p) => ({
+        ...p,
+        unloadingId: unloadingIdStr,
+        billingRate: 0,
+        unloadingQty: 0,
+        clientBillAmount: 0,
+      }));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const data = {
-      tripId: BigInt(form.tripId),
-      rate,
-      billingAmount,
+      tripId: BigInt(form.unloadingId), // store unloading ID in tripId field
+      rate: form.billingRate,
+      billingAmount: form.clientBillAmount,
       gstPercent,
       gstAmount,
       totalInvoice,
@@ -174,7 +228,7 @@ export default function BillingPage() {
   };
 
   const handlePrint = (inv: Invoice) => {
-    const trip = trips.find((t) => t.id === inv.tripId);
+    const eu = getEnrichedForInvoice(inv);
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
     printWindow.document.write(`
@@ -184,7 +238,8 @@ export default function BillingPage() {
           <style>
             body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
             h1 { font-size: 24px; margin-bottom: 4px; }
-            .subtitle { color: #666; margin-bottom: 32px; }
+            .subtitle { color: #666; margin-bottom: 8px; }
+            .meta { margin-bottom: 24px; font-size: 13px; color: #555; }
             table { width: 100%; border-collapse: collapse; }
             th, td { padding: 10px 12px; border: 1px solid #e5e7eb; text-align: left; }
             th { background: #f9fafb; font-weight: 600; }
@@ -193,18 +248,27 @@ export default function BillingPage() {
           </style>
         </head>
         <body>
-          <h1>JSL Transport</h1>
+          <h1>Jeen Trade & Exports Pvt Ltd</h1>
           <div class="subtitle">Tax Invoice #INV-${String(inv.id).padStart(4, "0")}</div>
-          ${trip ? `<p>Trip: ${trip.tripId} | ${trip.consigner} → ${trip.consignee}</p>` : ""}
+          ${
+            eu
+              ? `
+          <div class="meta">
+            <div>Trip: ${eu.tripId} | Vehicle: ${eu.vehicleNum}</div>
+            <div>Consigner: ${eu.consignerName} &rarr; Consignee: ${eu.consigneeName}</div>
+            ${eu.loadingDate ? `<div>Date: ${eu.loadingDate}</div>` : ""}
+          </div>`
+              : ""
+          }
           <table>
             <thead><tr><th>Description</th><th>Amount (₹)</th></tr></thead>
             <tbody>
-              <tr><td>Freight Charges (${trip?.loadingQty ?? "-"} MT × ₹${inv.rate})</td><td>₹${inv.billingAmount.toLocaleString("en-IN")}</td></tr>
+              <tr><td>Freight Charges (${eu?.unloadingQty?.toFixed(3) ?? "-"} MT × ₹${inv.rate}/MT)</td><td>₹${inv.billingAmount.toLocaleString("en-IN")}</td></tr>
               <tr><td>GST @ ${inv.gstPercent}%</td><td>₹${inv.gstAmount.toLocaleString("en-IN")}</td></tr>
               <tr class="total"><td><strong>Total Invoice Amount</strong></td><td><strong>₹${inv.totalInvoice.toLocaleString("en-IN")}</strong></td></tr>
             </tbody>
           </table>
-          <div class="footer">Generated by JSL Transport ERP</div>
+          <div class="footer">Generated by Jeen Trade ERP</div>
         </body>
       </html>
     `);
@@ -214,23 +278,35 @@ export default function BillingPage() {
 
   const isSaving = createInvoice.isPending || updateInvoice.isPending;
 
-  const getTripLabel = (tripId: bigint) => {
-    const trip = trips.find((t) => t.id === tripId);
-    return trip
-      ? `${trip.tripId} (${trip.consigner}→${trip.consignee})`
-      : tripId.toString();
-  };
+  // Summary stats
+  const totalBilled = invoices.reduce((s, i) => s + i.totalInvoice, 0);
+  const paidInvoices = invoices.filter((i) => i.status === "paid");
+  const pendingInvoices = invoices.filter((i) => i.status !== "paid");
+  const totalReceived = paidInvoices.reduce((s, i) => s + i.totalInvoice, 0);
+  const totalPending = pendingInvoices.reduce((s, i) => s + i.totalInvoice, 0);
 
   return (
     <div className="p-6 space-y-5" data-ocid="billing.page">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold font-display text-foreground">
-            Billing
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {invoices.length} invoices
-          </p>
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-9 w-9 items-center justify-center rounded-lg"
+            style={{ background: "oklch(0.65 0.16 150 / 0.12)" }}
+          >
+            <FileText
+              className="h-4 w-4"
+              style={{ color: "oklch(0.45 0.16 150)" }}
+            />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold font-display text-foreground">
+              Billing
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {invoices.length} invoice{invoices.length !== 1 ? "s" : ""}
+            </p>
+          </div>
         </div>
         <Button
           onClick={openCreateDialog}
@@ -242,111 +318,50 @@ export default function BillingPage() {
         </Button>
       </div>
 
-      {/* Vehicle Selection Grid */}
-      <div
-        className="rounded-lg border border-border bg-card overflow-hidden"
-        data-ocid="billing.vehicle_grid.section"
-      >
-        <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Truck className="h-4 w-4 text-primary" />
-            <p className="text-xs font-semibold font-display text-foreground">
-              Select Vehicles for Billing
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedTruckIds.size > 0 && (
-              <>
-                <span className="text-xs font-medium text-primary flex items-center gap-1">
-                  <CheckSquare className="h-3.5 w-3.5" />
-                  {selectedTruckIds.size} vehicle
-                  {selectedTruckIds.size !== 1 ? "s" : ""} selected
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 text-xs text-muted-foreground hover:text-foreground px-2"
-                  onClick={() => setSelectedTruckIds(new Set())}
-                >
-                  Clear
-                </Button>
-              </>
-            )}
-          </div>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+            Total Billed
+          </p>
+          <p className="mt-1 text-xl font-bold font-display text-foreground">
+            {formatCurrency(totalBilled)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {invoices.length} invoices
+          </p>
         </div>
-
-        <div className="p-4">
-          {trucksQuery.isLoading ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-16 w-full rounded-md" />
-              ))}
-            </div>
-          ) : trucks.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">
-              No vehicles registered yet. Add trucks in Settings.
-            </p>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {trucks.map((truck, index) => {
-                  const truckIdStr = truck.id.toString();
-                  const isSelected = selectedTruckIds.has(truckIdStr);
-                  return (
-                    <button
-                      key={truckIdStr}
-                      type="button"
-                      onClick={() => toggleTruckSelection(truckIdStr)}
-                      className={cn(
-                        "relative w-full text-left rounded-md border-2 p-3 cursor-pointer transition-all duration-150 select-none",
-                        "hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        isSelected
-                          ? "border-primary bg-primary/5"
-                          : "border-border bg-background hover:border-primary/40",
-                      )}
-                      data-ocid={`billing.vehicle_card.${index + 1}`}
-                    >
-                      {/* Checkbox top-right */}
-                      <div className="absolute top-2 right-2">
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() =>
-                            toggleTruckSelection(truckIdStr)
-                          }
-                          onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4"
-                          data-ocid={`billing.vehicle_checkbox.${index + 1}`}
-                        />
-                      </div>
-
-                      <div className="pr-6">
-                        <p
-                          className={cn(
-                            "text-sm font-bold font-display leading-tight truncate",
-                            isSelected ? "text-primary" : "text-foreground",
-                          )}
-                        >
-                          {truck.truckNumber}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                          {truck.ownerName}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              {selectedTruckIds.size === 0 && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  Select one or more vehicles to filter trips in the New Invoice
-                  dialog.
-                </p>
-              )}
-            </>
-          )}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+            Received
+          </p>
+          <p
+            className="mt-1 text-xl font-bold font-display"
+            style={{ color: "oklch(0.45 0.16 150)" }}
+          >
+            {formatCurrency(totalReceived)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {paidInvoices.length} paid
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+            Pending
+          </p>
+          <p
+            className="mt-1 text-xl font-bold font-display"
+            style={{ color: "oklch(0.577 0.245 27.325)" }}
+          >
+            {formatCurrency(totalPending)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {pendingInvoices.length} unpaid
+          </p>
         </div>
       </div>
 
+      {/* Invoices Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {invoicesQuery.isLoading ? (
           <div className="p-6 space-y-3">
@@ -359,8 +374,12 @@ export default function BillingPage() {
             className="flex flex-col items-center justify-center py-16"
             data-ocid="billing.empty_state"
           >
-            <p className="text-sm text-muted-foreground">
+            <FileText className="h-8 w-8 text-muted-foreground/40 mb-3" />
+            <p className="text-sm font-medium text-muted-foreground">
               No invoices created yet
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Create an invoice from a completed unloading record
             </p>
           </div>
         ) : (
@@ -371,12 +390,26 @@ export default function BillingPage() {
                   <TableHead className="text-xs font-semibold">
                     Invoice #
                   </TableHead>
-                  <TableHead className="text-xs font-semibold">Trip</TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Rate
+                  <TableHead className="text-xs font-semibold">
+                    Trip ID
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold">
+                    Vehicle
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold">
+                    Consigner
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold">
+                    Consignee
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
-                    Billing
+                    Unload Qty
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Rate/MT
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Bill Amt
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     GST%
@@ -396,74 +429,89 @@ export default function BillingPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {invoices.map((inv, index) => (
-                  <TableRow
-                    key={inv.id.toString()}
-                    className="table-row-hover"
-                    data-ocid={`billing.item.${index + 1}`}
-                  >
-                    <TableCell className="text-xs font-mono font-medium">
-                      INV-{String(inv.id).padStart(4, "0")}
-                    </TableCell>
-                    <TableCell className="text-xs max-w-[140px] truncate">
-                      {getTripLabel(inv.tripId)}
-                    </TableCell>
-                    <TableCell className="text-xs text-right">
-                      {formatCurrency(inv.rate)}/MT
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      {formatCurrency(inv.billingAmount)}
-                    </TableCell>
-                    <TableCell className="text-xs text-right">
-                      {inv.gstPercent}%
-                    </TableCell>
-                    <TableCell className="text-xs text-right">
-                      {formatCurrency(inv.gstAmount)}
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-semibold">
-                      {formatCurrency(inv.totalInvoice)}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded border capitalize ${getStatusClass(inv.status)}`}
-                      >
-                        {inv.status}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handlePrint(inv)}
-                          className="h-7 w-7 p-0"
-                          title="Print Invoice"
-                          data-ocid={`billing.print_button.${index + 1}`}
+                {invoices.map((inv, index) => {
+                  const eu = getEnrichedForInvoice(inv);
+                  return (
+                    <TableRow
+                      key={inv.id.toString()}
+                      className="table-row-hover"
+                      data-ocid={`billing.item.${index + 1}`}
+                    >
+                      <TableCell className="text-xs font-mono font-medium">
+                        INV-{String(inv.id).padStart(4, "0")}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono">
+                        {eu?.tripId ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono">
+                        {eu?.vehicleNum ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[100px] truncate">
+                        {eu?.consignerName ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[100px] truncate">
+                        {eu?.consigneeName ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right">
+                        {eu?.unloadingQty?.toFixed(3) ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right">
+                        {formatCurrency(inv.rate)}/MT
+                      </TableCell>
+                      <TableCell className="text-xs text-right font-medium">
+                        {formatCurrency(inv.billingAmount)}
+                      </TableCell>
+                      <TableCell className="text-xs text-right">
+                        {inv.gstPercent}%
+                      </TableCell>
+                      <TableCell className="text-xs text-right">
+                        {formatCurrency(inv.gstAmount)}
+                      </TableCell>
+                      <TableCell className="text-xs text-right font-semibold">
+                        {formatCurrency(inv.totalInvoice)}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded border capitalize ${getStatusClass(inv.status)}`}
                         >
-                          <Printer className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(inv)}
-                          className="h-7 w-7 p-0"
-                          data-ocid={`billing.edit_button.${index + 1}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(inv)}
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          data-ocid={`billing.delete_button.${index + 1}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          {inv.status}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handlePrint(inv)}
+                            className="h-7 w-7 p-0"
+                            title="Print Invoice"
+                            data-ocid={`billing.print_button.${index + 1}`}
+                          >
+                            <Printer className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(inv)}
+                            className="h-7 w-7 p-0"
+                            data-ocid={`billing.edit_button.${index + 1}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(inv)}
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            data-ocid={`billing.delete_button.${index + 1}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -479,76 +527,95 @@ export default function BillingPage() {
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Unloading record selector */}
             <div className="space-y-1.5">
-              <Label className="text-xs">Select Trip *</Label>
+              <Label className="text-xs">Select Unloading Record *</Label>
               <Select
-                value={form.tripId}
-                onValueChange={(v) => setForm((p) => ({ ...p, tripId: v }))}
+                value={form.unloadingId}
+                onValueChange={handleUnloadingSelect}
               >
                 <SelectTrigger
                   className="text-xs"
-                  data-ocid="billing.form.trip_select"
+                  data-ocid="billing.form.unloading_select"
                 >
-                  <SelectValue placeholder="Select trip" />
+                  <SelectValue placeholder="Select unloading record" />
                 </SelectTrigger>
                 <SelectContent>
-                  {filteredTrips.map((t) => (
-                    <SelectItem
-                      key={t.id.toString()}
-                      value={t.id.toString()}
-                      className="text-xs"
-                    >
-                      {t.tripId} – {t.consigner} → {t.consignee}
+                  {enrichedUnloadings.length === 0 ? (
+                    <SelectItem value="_none" disabled className="text-xs">
+                      No unloading records found
                     </SelectItem>
-                  ))}
+                  ) : (
+                    enrichedUnloadings.map((u) => (
+                      <SelectItem
+                        key={u.id.toString()}
+                        value={u.id.toString()}
+                        className="text-xs"
+                      >
+                        {u.tripId} — {u.vehicleNum} |{" "}
+                        {u.unloadingQty.toFixed(2)} MT | ₹
+                        {u.clientBillAmount.toLocaleString("en-IN")}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
-              {selectedTruckIds.size > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Showing trips for {selectedTruckIds.size} selected vehicle
-                  {selectedTruckIds.size !== 1 ? "s" : ""}
-                </p>
-              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="rate" className="text-xs">
-                  Rate per MT (₹) *
-                </Label>
-                <Input
-                  id="rate"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.rate}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, rate: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="billing.form.rate_input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="gstPercent" className="text-xs">
-                  GST % *
-                </Label>
-                <Input
-                  id="gstPercent"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  value={form.gstPercent}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, gstPercent: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                />
-              </div>
+            {/* Auto-filled trip details */}
+            {form.unloadingId &&
+              (() => {
+                const eu = enrichedUnloadings.find(
+                  (x) => x.id.toString() === form.unloadingId,
+                );
+                if (!eu) return null;
+                return (
+                  <div className="rounded-md bg-muted/40 border border-border p-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <div>
+                      <p className="text-muted-foreground">Vehicle</p>
+                      <p className="font-medium font-mono">{eu.vehicleNum}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Trip ID</p>
+                      <p className="font-medium font-mono">{eu.tripId}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Consigner</p>
+                      <p className="font-medium">{eu.consignerName}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Consignee</p>
+                      <p className="font-medium">{eu.consigneeName}</p>
+                    </div>
+                    {eu.loadingDate && (
+                      <div className="col-span-2">
+                        <p className="text-muted-foreground">Loading Date</p>
+                        <p className="font-medium">
+                          {formatDate(eu.loadingDate)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+            <div className="space-y-1.5">
+              <Label htmlFor="gstPercent" className="text-xs">
+                GST %
+              </Label>
+              <Input
+                id="gstPercent"
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={form.gstPercent}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, gstPercent: e.target.value }))
+                }
+                required
+                className="text-xs w-32"
+              />
             </div>
 
             {/* Auto-calculated values */}
@@ -558,23 +625,35 @@ export default function BillingPage() {
               </p>
               <div className="grid grid-cols-3 gap-3 text-xs">
                 <div>
-                  <p className="text-muted-foreground">Loading Qty</p>
-                  <p className="font-medium">{loadingQty} MT</p>
+                  <p className="text-muted-foreground">Unloading Qty</p>
+                  <p className="font-medium">
+                    {form.unloadingQty.toFixed(3)} MT
+                  </p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Billing Amount</p>
-                  <p className="font-medium">{formatCurrency(billingAmount)}</p>
+                  <p className="text-muted-foreground">Billing Rate</p>
+                  <p className="font-medium">
+                    {formatCurrency(form.billingRate)}/MT
+                  </p>
                 </div>
+                <div>
+                  <p className="text-muted-foreground">Bill Amount</p>
+                  <p className="font-medium">
+                    {formatCurrency(form.clientBillAmount)}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs pt-1">
                 <div>
                   <p className="text-muted-foreground">GST Amount</p>
                   <p className="font-medium">{formatCurrency(gstAmount)}</p>
                 </div>
-              </div>
-              <div className="pt-2 border-t border-border">
-                <p className="text-muted-foreground text-xs">Total Invoice</p>
-                <p className="text-base font-bold font-display text-foreground">
-                  {formatCurrency(totalInvoice)}
-                </p>
+                <div className="pt-2 border-l border-border pl-3">
+                  <p className="text-muted-foreground text-xs">Total Invoice</p>
+                  <p className="text-base font-bold font-display text-foreground">
+                    {formatCurrency(totalInvoice)}
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -616,7 +695,7 @@ export default function BillingPage() {
               </Button>
               <Button
                 type="submit"
-                disabled={isSaving || !form.tripId || !form.rate}
+                disabled={isSaving || !form.unloadingId}
                 data-ocid="billing.form.submit_button"
                 className="text-xs"
               >

@@ -789,7 +789,17 @@ function bigIntEq(a: bigint | number, b: bigint | number): boolean {
 export function useGetAllConsigners() {
   return useQuery<Consigner[]>({
     queryKey: ["consigners"],
-    queryFn: async () => loadFromStorage<Consigner>("jt_consigners"),
+    queryFn: async () => {
+      const items = loadFromStorage<Consigner>("jt_consigners");
+      // Normalise numeric fields that may have been stored as strings
+      return items.map((item) => ({
+        ...item,
+        associationRate: Number(item.associationRate) || 0,
+        nonAssociationRate: Number(item.nonAssociationRate) || 0,
+        vendorRate: Number(item.vendorRate) || 0,
+        billingRate: Number(item.billingRate) || 0,
+      }));
+    },
     // Local storage — no actor needed, always enabled
     staleTime: 0,
   });
@@ -1208,16 +1218,271 @@ export function useDeleteUnloading() {
   });
 }
 
+// =================== RECEIVABLE (LOCAL STATE) ===================
+export interface Receivable {
+  id: bigint;
+  date: string;
+  invoiceNumber: string;
+  clientName: string;
+  invoiceAmount: number;
+  amountReceived: number;
+  balance: number;
+  paymentDate: string;
+  paymentMode: string; // Cash | NEFT | RTGS | Cheque | Online
+  referenceNumber: string;
+  remarks: string;
+  status: string; // pending | partial | paid
+}
+
+function calcReceivableStatus(
+  invoiceAmount: number,
+  amountReceived: number,
+): { balance: number; status: string } {
+  const balance = invoiceAmount - amountReceived;
+  let status = "pending";
+  if (balance <= 0) status = "paid";
+  else if (amountReceived > 0) status = "partial";
+  return { balance: Math.max(0, balance), status };
+}
+
+export function useGetAllReceivables() {
+  return useQuery<Receivable[]>({
+    queryKey: ["receivables"],
+    queryFn: async () => loadFromStorage<Receivable>("jt_receivables"),
+    staleTime: 0,
+  });
+}
+
+export function useCreateReceivable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<Receivable, "id" | "balance" | "status">) => {
+      const items = loadFromStorage<Receivable>("jt_receivables");
+      const { balance, status } = calcReceivableStatus(
+        data.invoiceAmount,
+        data.amountReceived,
+      );
+      const newItem: Receivable = {
+        ...data,
+        id: nextId(items),
+        balance,
+        status,
+      };
+      saveToStorage("jt_receivables", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["receivables"] }),
+  });
+}
+
+export function useUpdateReceivable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      data: Omit<Receivable, "balance" | "status"> & { id: bigint },
+    ) => {
+      const items = loadFromStorage<Receivable>("jt_receivables");
+      const { balance, status } = calcReceivableStatus(
+        data.invoiceAmount,
+        data.amountReceived,
+      );
+      const updated: Receivable = { ...data, balance, status };
+      saveToStorage(
+        "jt_receivables",
+        items.map((i) => (bigIntEq(i.id, data.id) ? updated : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["receivables"] }),
+  });
+}
+
+export function useDeleteReceivable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<Receivable>("jt_receivables");
+      saveToStorage(
+        "jt_receivables",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["receivables"] }),
+  });
+}
+
+// =================== PAYABLE (LOCAL STATE) ===================
+export interface Payable {
+  id: bigint;
+  date: string;
+  vehicleNumber: string;
+  ownerName: string;
+  tripReference: string;
+  totalPayable: number;
+  amountPaid: number;
+  balance: number;
+  paymentDate: string;
+  paymentMode: string; // Cash | NEFT | RTGS | Cheque | Online
+  referenceNumber: string;
+  remarks: string;
+  status: string; // pending | partial | paid
+}
+
+function calcPayableStatus(
+  totalPayable: number,
+  amountPaid: number,
+): { balance: number; status: string } {
+  const balance = totalPayable - amountPaid;
+  let status = "pending";
+  if (balance <= 0) status = "paid";
+  else if (amountPaid > 0) status = "partial";
+  return { balance: Math.max(0, balance), status };
+}
+
+export function useGetAllPayables() {
+  return useQuery<Payable[]>({
+    queryKey: ["payables"],
+    queryFn: async () => loadFromStorage<Payable>("jt_payables"),
+    staleTime: 0,
+  });
+}
+
+export function useCreatePayable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<Payable, "id" | "balance" | "status">) => {
+      const items = loadFromStorage<Payable>("jt_payables");
+      const { balance, status } = calcPayableStatus(
+        data.totalPayable,
+        data.amountPaid,
+      );
+      const newItem: Payable = {
+        ...data,
+        id: nextId(items),
+        balance,
+        status,
+      };
+      saveToStorage("jt_payables", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
+  });
+}
+
+export function useUpdatePayable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      data: Omit<Payable, "balance" | "status"> & { id: bigint },
+    ) => {
+      const items = loadFromStorage<Payable>("jt_payables");
+      const { balance, status } = calcPayableStatus(
+        data.totalPayable,
+        data.amountPaid,
+      );
+      const updated: Payable = { ...data, balance, status };
+      saveToStorage(
+        "jt_payables",
+        items.map((i) => (bigIntEq(i.id, data.id) ? updated : i)),
+      );
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
+  });
+}
+
+export function useDeletePayable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<Payable>("jt_payables");
+      saveToStorage(
+        "jt_payables",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
+  });
+}
+
+// =================== PETTY CASH LEDGER (LOCAL STATE) ===================
+export interface PettyCashLedger {
+  id: bigint;
+  date: string;
+  transactionType: string; // credit | debit
+  category: string;
+  narration: string;
+  amount: number;
+  reference: string;
+}
+
+export function useGetAllPettyCashLedger() {
+  return useQuery<PettyCashLedger[]>({
+    queryKey: ["pettycash_ledger"],
+    queryFn: async () =>
+      loadFromStorage<PettyCashLedger>("jt_pettycash_ledger"),
+    staleTime: 0,
+  });
+}
+
+export function useCreatePettyCashLedger() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<PettyCashLedger, "id">) => {
+      const items = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
+      const newItem: PettyCashLedger = { ...data, id: nextId(items) };
+      saveToStorage("jt_pettycash_ledger", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["pettycash_ledger"] }),
+  });
+}
+
+export function useUpdatePettyCashLedger() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: PettyCashLedger) => {
+      const items = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
+      saveToStorage(
+        "jt_pettycash_ledger",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["pettycash_ledger"] }),
+  });
+}
+
+export function useDeletePettyCashLedger() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
+      saveToStorage(
+        "jt_pettycash_ledger",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["pettycash_ledger"] }),
+  });
+}
+
 // =================== USER PROFILE ===================
 export function useGetUserProfile() {
-  const { actor, isFetching } = useActor();
+  const { actor } = useActor();
   return useQuery<UserProfile | null>({
     queryKey: ["userProfile"],
     queryFn: async () => {
       if (!actor) return null;
       return actor.getCallerUserProfile();
     },
-    enabled: !!actor && !isFetching,
+    // Only gate on actor being present — do NOT gate on isFetching.
+    // isFetching stays true while _initializeAccessControlWithSecret runs,
+    // which would deadlock the profile query and leave App.tsx in an infinite loading state.
+    enabled: !!actor,
     // Keep profile data fresh for 10 minutes — no need to re-fetch on every page visit
     staleTime: 10 * 60 * 1000,
     // Don't refetch on window focus — profile rarely changes

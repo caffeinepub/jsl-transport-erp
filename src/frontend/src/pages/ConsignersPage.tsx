@@ -83,10 +83,10 @@ export default function ConsignersPage() {
       name: item.name,
       material: item.material,
       location: item.location,
-      associationRate: item.associationRate.toString(),
-      nonAssociationRate: item.nonAssociationRate.toString(),
-      vendorRate: item.vendorRate.toString(),
-      billingRate: item.billingRate.toString(),
+      associationRate: Number(item.associationRate).toString(),
+      nonAssociationRate: Number(item.nonAssociationRate).toString(),
+      vendorRate: Number(item.vendorRate).toString(),
+      billingRate: Number(item.billingRate).toString(),
     });
     setDialogOpen(true);
   };
@@ -247,13 +247,14 @@ export default function ConsignersPage() {
                       {item.location}
                     </TableCell>
                     <TableCell className="text-xs text-right font-medium">
-                      ₹{item.associationRate.toLocaleString("en-IN")}/MT
+                      ₹{Number(item.associationRate).toLocaleString("en-IN")}/MT
                     </TableCell>
                     <TableCell className="text-xs text-right font-medium">
-                      ₹{item.nonAssociationRate.toLocaleString("en-IN")}/MT
+                      ₹{Number(item.nonAssociationRate).toLocaleString("en-IN")}
+                      /MT
                     </TableCell>
                     <TableCell className="text-xs text-right font-medium">
-                      ₹{item.vendorRate.toLocaleString("en-IN")}/MT
+                      ₹{Number(item.vendorRate).toLocaleString("en-IN")}/MT
                     </TableCell>
                     <TableCell className="text-xs text-right font-medium">
                       <span
@@ -263,7 +264,7 @@ export default function ConsignersPage() {
                           color: "oklch(0.45 0.18 145)",
                         }}
                       >
-                        ₹{item.billingRate.toLocaleString("en-IN")}/MT
+                        ₹{Number(item.billingRate).toLocaleString("en-IN")}/MT
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
@@ -465,8 +466,9 @@ export default function ConsignersPage() {
                 data-ocid="consigners.billing_rate.input"
               />
               <p className="text-[10px] text-muted-foreground">
-                This rate is used when Jeen Trade generates the invoice to the
-                client (e.g. Jindal, Tata). It may differ from booking rates.
+                This is Jeen Trade's billing rate -- used when raising the
+                invoice to clients (Jindal, Tata, etc.). It is separate from
+                vehicle booking rates.
               </p>
             </div>
 

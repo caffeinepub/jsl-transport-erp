@@ -10,13 +10,16 @@ import { useSaveUserProfile } from "../hooks/useQueries";
 export default function SetupProfileModal() {
   const [name, setName] = useState("");
   const saveProfile = useSaveUserProfile();
-  const { actor, isFetching } = useActor();
+  const { actor } = useActor();
+
+  // Actor is present when this modal renders — isReady is simply whether the actor exists.
+  const isReady = !!actor;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    if (!actor || isFetching) {
+    if (!actor) {
       toast.error(
         "Still connecting to the network. Please wait a moment and try again.",
       );
@@ -33,7 +36,6 @@ export default function SetupProfileModal() {
       } catch (err) {
         lastError = err;
         if (attempt < 3) {
-          // Wait briefly before retrying
           await new Promise((res) => setTimeout(res, 1000 * attempt));
         }
       }
@@ -44,8 +46,6 @@ export default function SetupProfileModal() {
       "Failed to save profile. Please refresh the page and try again.",
     );
   };
-
-  const isReady = !!actor && !isFetching;
 
   return (
     <div className="flex h-screen items-center justify-center bg-background">
@@ -100,7 +100,7 @@ export default function SetupProfileModal() {
               className="text-center text-xs text-muted-foreground"
               data-ocid="profile.loading_state"
             >
-              Establishing secure connection to the blockchain...
+              Establishing secure connection...
             </p>
           )}
         </form>
