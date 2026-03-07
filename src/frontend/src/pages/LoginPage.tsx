@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { BarChart3, FileText, Loader2, Shield, Truck } from "lucide-react";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 
+const LOGO_SRC = "/assets/uploads/ChatGPT-Image-Mar-7-2026-02_18_24-PM-1.png";
+
 export default function LoginPage() {
   const { login, isLoggingIn, isLoginError, loginError } =
     useInternetIdentity();
@@ -15,20 +17,29 @@ export default function LoginPage() {
       >
         <div className="flex items-center gap-3">
           <div
-            className="flex h-10 w-10 items-center justify-center rounded-lg"
-            style={{ background: "oklch(0.72 0.18 60)" }}
+            className="flex h-12 w-12 items-center justify-center rounded-xl overflow-hidden"
+            style={{ background: "#ffffff" }}
           >
-            <Truck
-              className="h-6 w-6"
-              style={{ color: "oklch(0.08 0.02 260)" }}
+            <img
+              src={LOGO_SRC}
+              alt="JTPL Logo"
+              className="h-11 w-11 object-contain"
             />
           </div>
-          <span
-            className="text-xl font-bold font-display"
-            style={{ color: "oklch(0.95 0.01 240)" }}
-          >
-            JSL Transport
-          </span>
+          <div>
+            <span
+              className="block text-xl font-bold font-display leading-tight"
+              style={{ color: "oklch(0.95 0.01 240)" }}
+            >
+              Jeen Trade &amp; Exports
+            </span>
+            <span
+              className="text-xs font-medium"
+              style={{ color: "oklch(0.72 0.18 60)" }}
+            >
+              Pvt Ltd — Transport ERP
+            </span>
+          </div>
         </div>
 
         <div className="space-y-8">
@@ -115,16 +126,28 @@ export default function LoginPage() {
       <div className="flex w-full lg:w-1/2 flex-col items-center justify-center bg-background p-8">
         <div className="w-full max-w-sm">
           {/* Mobile Logo */}
-          <div className="mb-8 flex items-center justify-center gap-3 lg:hidden">
+          <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
             <div
-              className="flex h-10 w-10 items-center justify-center rounded-lg"
-              style={{ background: "oklch(0.18 0.04 260)" }}
+              className="flex h-20 w-20 items-center justify-center rounded-2xl overflow-hidden shadow-md"
+              style={{
+                background: "#ffffff",
+                border: "1px solid oklch(0.9 0.01 240)",
+              }}
             >
-              <Truck className="h-6 w-6 text-primary" />
+              <img
+                src={LOGO_SRC}
+                alt="JTPL Logo"
+                className="h-18 w-18 object-contain p-1"
+              />
             </div>
-            <span className="text-xl font-bold font-display text-foreground">
-              JSL Transport
-            </span>
+            <div className="text-center">
+              <span className="block text-xl font-bold font-display text-foreground">
+                Jeen Trade &amp; Exports
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Pvt Ltd — Transport ERP
+              </span>
+            </div>
           </div>
 
           <div className="mb-8 text-center lg:text-left">

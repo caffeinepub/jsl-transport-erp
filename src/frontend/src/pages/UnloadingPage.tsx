@@ -142,29 +142,37 @@ export default function UnloadingPage({
     const tollCharges = Number(form.tollCharges) || 0;
     const vehicleCost = unloadingQty * bookingRate;
     const clientBillAmount = unloadingQty * billingRate;
+    const gstAmount = clientBillAmount * 0.18;
+    const billAmount = clientBillAmount + gstAmount;
     const netPayableToVehicle =
       vehicleCost -
+      shortageAmount -
+      gpsDeduction -
+      challanDeduction -
       advanceCash -
       advanceBank -
       hsdAmount -
-      gpsDeduction -
-      challanDeduction -
-      penalty -
-      tollCharges -
-      cashTds;
+      cashTds -
+      penalty +
+      tollCharges;
 
     return {
       loadingQty,
+      unloadingQty,
       shortageQty,
       shortageAmount,
       cashTds,
       vehicleCost,
       clientBillAmount,
+      gstAmount,
+      billAmount,
       netPayableToVehicle,
       advanceCash,
       advanceBank,
       hsdAmount,
       tollCharges,
+      bookingRate,
+      billingRate,
     };
   }, [form, trips]);
 
@@ -463,7 +471,7 @@ export default function UnloadingPage({
       {/* Add/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
-          className="max-w-2xl max-h-[90vh] overflow-y-auto"
+          className="max-w-4xl max-h-[90vh] overflow-y-auto"
           data-ocid="unloading.dialog"
         >
           <DialogHeader>
@@ -682,106 +690,292 @@ export default function UnloadingPage({
               </div>
             </div>
 
-            {/* Live preview panel */}
+            {/* Live Calculation Preview — Two-Panel Excel Style */}
             {form.unloadingQty && form.bookingRate && (
-              <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-3 space-y-2">
-                <p className="text-xs font-bold text-foreground">
-                  📊 Live Calculation Preview
-                </p>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Loading Qty</span>
-                    <span className="font-medium">
-                      {computedValues.loadingQty.toFixed(3)} MT
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Unloading Qty</span>
-                    <span className="font-medium">
-                      {Number(form.unloadingQty).toFixed(3)} MT
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Shortage Qty</span>
-                    <span
-                      className={
-                        computedValues.shortageQty > 0
-                          ? "font-semibold text-destructive"
-                          : "text-muted-foreground"
-                      }
-                    >
-                      {computedValues.shortageQty.toFixed(3)} MT
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">
-                      Shortage Amount
-                    </span>
-                    <span
-                      className={
-                        computedValues.shortageAmount > 0
-                          ? "font-semibold text-destructive"
-                          : "text-muted-foreground"
-                      }
-                    >
-                      {fmt(computedValues.shortageAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Cash TDS (2%)</span>
-                    <span className="font-medium">
-                      {fmt(computedValues.cashTds)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">
-                      Advance (Cash+Bank)
-                    </span>
-                    <span className="font-medium">
-                      {fmt(
-                        computedValues.advanceCash + computedValues.advanceBank,
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">HSD Amount</span>
-                    <span className="font-medium">
-                      {fmt(computedValues.hsdAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Toll Charges</span>
-                    <span className="font-medium">
-                      {fmt(computedValues.tollCharges)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Vehicle Cost</span>
-                    <span className="font-semibold text-foreground">
-                      {fmt(computedValues.vehicleCost)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Client Bill</span>
-                    <span className="font-semibold text-foreground">
-                      {fmt(computedValues.clientBillAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-t border-border pt-1.5 col-span-2">
-                    <span className="font-semibold text-foreground">
-                      Net Payable to Vehicle
-                    </span>
-                    <span
-                      className="font-bold text-sm"
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-foreground tracking-wide uppercase">
+                    Live Calculation Preview
+                  </span>
+                  <div
+                    className="h-px flex-1"
+                    style={{ background: "oklch(0.7 0.05 250 / 0.3)" }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* LEFT PANEL — Live Calculation Preview Payable */}
+                  <div
+                    className="rounded overflow-hidden border text-xs"
+                    style={{ borderColor: "oklch(0.55 0.16 150 / 0.5)" }}
+                  >
+                    {/* Panel Header */}
+                    <div
+                      className="px-3 py-2"
                       style={{
-                        color:
-                          computedValues.netPayableToVehicle < 0
-                            ? "oklch(0.45 0.2 27)"
-                            : "oklch(0.4 0.16 150)",
+                        background: "oklch(0.3 0.1 150)",
+                        color: "white",
                       }}
                     >
-                      {fmt(computedValues.netPayableToVehicle)}
-                    </span>
+                      <span className="font-bold text-[11px] tracking-wider uppercase">
+                        Live Calculation Preview
+                      </span>
+                      <br />
+                      <span className="font-semibold text-[11px] opacity-90">
+                        Payable
+                      </span>
+                    </div>
+
+                    {/* Spreadsheet rows */}
+                    <table
+                      className="w-full border-collapse"
+                      style={{
+                        fontFamily: "Arial, sans-serif",
+                        fontSize: "11px",
+                      }}
+                    >
+                      <tbody>
+                        {[
+                          {
+                            label: "Loading Qty",
+                            value: `${computedValues.loadingQty.toFixed(1)}`,
+                          },
+                          {
+                            label: "Unloading Qty",
+                            value: `${computedValues.unloadingQty.toFixed(1)}`,
+                          },
+                          {
+                            label: "Booking Rate",
+                            value: `${computedValues.bookingRate.toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "Vehicle Cost",
+                            value: `${computedValues.vehicleCost.toLocaleString("en-IN")}`,
+                            bold: true,
+                          },
+                          {
+                            label: "Shortage Qty",
+                            value: `${computedValues.shortageQty.toFixed(1)}`,
+                            danger: computedValues.shortageQty > 0,
+                          },
+                          {
+                            label: "Shortage Amount",
+                            value: `${computedValues.shortageAmount.toLocaleString("en-IN")}`,
+                            danger: computedValues.shortageAmount > 0,
+                          },
+                          {
+                            label: "Cash TDS (2%)",
+                            value: `${Math.round(computedValues.cashTds).toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "Advance (Cash+Bank)",
+                            value: `${(computedValues.advanceCash + computedValues.advanceBank).toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "HSD Amount",
+                            value: `${computedValues.hsdAmount.toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "Toll Charges payable",
+                            value: `${computedValues.tollCharges.toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "GPS Deduction",
+                            value: `${(Number(form.gpsDeduction) || 131).toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "Challan Deduction",
+                            value: `${(Number(form.challanDeduction) || 200).toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "Penalty",
+                            value: `${(Number(form.penalty) || 0).toLocaleString("en-IN")}`,
+                          },
+                        ].map((row, i) => (
+                          <tr
+                            key={row.label}
+                            style={{
+                              background: i % 2 === 0 ? "#ffffff" : "#f0f4f0",
+                            }}
+                          >
+                            <td
+                              style={{
+                                padding: "5px 10px",
+                                borderBottom: "1px solid #d0ddd0",
+                                borderRight: "1px solid #d0ddd0",
+                                color: row.danger ? "#c0392b" : "#1a2a1a",
+                                fontWeight: row.bold ? 600 : 400,
+                                width: "65%",
+                              }}
+                            >
+                              {row.label}
+                            </td>
+                            <td
+                              style={{
+                                padding: "5px 10px",
+                                borderBottom: "1px solid #d0ddd0",
+                                textAlign: "right",
+                                color: row.danger
+                                  ? "#c0392b"
+                                  : row.bold
+                                    ? "#0a4020"
+                                    : "#1a2a1a",
+                                fontWeight: row.bold ? 700 : 400,
+                              }}
+                            >
+                              {row.value}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr
+                          style={{
+                            background:
+                              computedValues.netPayableToVehicle < 0
+                                ? "#c0392b"
+                                : "#1a6b35",
+                            color: "white",
+                          }}
+                        >
+                          <td
+                            style={{
+                              padding: "7px 10px",
+                              fontWeight: 700,
+                              fontSize: "12px",
+                            }}
+                          >
+                            payable
+                          </td>
+                          <td
+                            style={{
+                              padding: "7px 10px",
+                              textAlign: "right",
+                              fontWeight: 700,
+                              fontSize: "12px",
+                            }}
+                          >
+                            {Math.round(
+                              computedValues.netPayableToVehicle,
+                            ).toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {/* RIGHT PANEL — Live Calculation Preview Receivable */}
+                  <div
+                    className="rounded overflow-hidden border text-xs"
+                    style={{ borderColor: "oklch(0.45 0.18 250 / 0.5)" }}
+                  >
+                    {/* Panel Header */}
+                    <div
+                      className="px-3 py-2"
+                      style={{
+                        background: "oklch(0.28 0.12 250)",
+                        color: "white",
+                      }}
+                    >
+                      <span className="font-bold text-[11px] tracking-wider uppercase">
+                        Live Calculation Preview
+                      </span>
+                      <br />
+                      <span className="font-semibold text-[11px] opacity-90">
+                        Receivable
+                      </span>
+                    </div>
+
+                    {/* Spreadsheet rows */}
+                    <table
+                      className="w-full border-collapse"
+                      style={{
+                        fontFamily: "Arial, sans-serif",
+                        fontSize: "11px",
+                      }}
+                    >
+                      <tbody>
+                        {[
+                          {
+                            label: "Loading Qty",
+                            value: `${computedValues.loadingQty.toFixed(1)}`,
+                          },
+                          {
+                            label: "Unloading Qty",
+                            value: `${computedValues.unloadingQty.toFixed(1)}`,
+                          },
+                          {
+                            label: "Billing Rate",
+                            value: `${computedValues.billingRate.toLocaleString("en-IN")}`,
+                          },
+                          {
+                            label: "vehicle cost",
+                            value: `${computedValues.clientBillAmount.toLocaleString("en-IN")}`,
+                            bold: true,
+                          },
+                          {
+                            label: "Gst applicable",
+                            value: `${Math.round(computedValues.gstAmount).toLocaleString("en-IN")}`,
+                          },
+                        ].map((row, i) => (
+                          <tr
+                            key={row.label}
+                            style={{
+                              background: i % 2 === 0 ? "#ffffff" : "#f0f2f8",
+                            }}
+                          >
+                            <td
+                              style={{
+                                padding: "5px 10px",
+                                borderBottom: "1px solid #ccd0e0",
+                                borderRight: "1px solid #ccd0e0",
+                                color: "#1a1a2e",
+                                fontWeight: row.bold ? 600 : 400,
+                                width: "65%",
+                              }}
+                            >
+                              {row.label}
+                            </td>
+                            <td
+                              style={{
+                                padding: "5px 10px",
+                                borderBottom: "1px solid #ccd0e0",
+                                textAlign: "right",
+                                color: row.bold ? "#0a1060" : "#1a1a2e",
+                                fontWeight: row.bold ? 700 : 400,
+                              }}
+                            >
+                              {row.value}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: "#1a3080", color: "white" }}>
+                          <td
+                            style={{
+                              padding: "7px 10px",
+                              fontWeight: 700,
+                              fontSize: "12px",
+                            }}
+                          >
+                            bill amount
+                          </td>
+                          <td
+                            style={{
+                              padding: "7px 10px",
+                              textAlign: "right",
+                              fontWeight: 700,
+                              fontSize: "12px",
+                            }}
+                          >
+                            {Math.round(
+                              computedValues.billAmount,
+                            ).toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
                   </div>
                 </div>
               </div>

@@ -1,457 +1,278 @@
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Separator } from "@/components/ui/separator";
+import { Loader2, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  type Client,
-  useCreateClient,
-  useDeleteClient,
-  useGetAllClients,
-  useGetUserProfile,
-  useSaveUserProfile,
-  useUpdateClient,
+  type ERPSettings,
+  useGetSettings,
+  useSaveSettings,
 } from "../hooks/useQueries";
 
-// =================== CLIENTS SECTION ===================
-interface ClientFormData {
-  clientName: string;
-  gstNumber: string;
-  address: string;
-}
-const defaultClientForm: ClientFormData = {
-  clientName: "",
-  gstNumber: "",
-  address: "",
-};
+const ROLES = [
+  "Super Admin",
+  "Director",
+  "Operations Manager",
+  "Accounts",
+  "Diesel Manager",
+  "Data Entry",
+  "Auditor",
+];
 
-function ClientsTab() {
-  const clientsQuery = useGetAllClients();
-  const createClient = useCreateClient();
-  const updateClient = useUpdateClient();
-  const deleteClient = useDeleteClient();
+export default function SettingsPage() {
+  const settingsQuery = useGetSettings();
+  const saveSettings = useSaveSettings();
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [form, setForm] = useState<ClientFormData>(defaultClientForm);
-  const [deleteConfirm, setDeleteConfirm] = useState<Client | null>(null);
+  const [form, setForm] = useState<ERPSettings>({
+    companyName: "Jeen Trade & Exports Pvt Ltd",
+    companyAddress: "",
+    companyGST: "",
+    gpsDeduction: 131,
+    challanRate: 200,
+    shortageRate: 5000,
+    gstRate: 18,
+  });
 
-  const clients = clientsQuery.data ?? [];
+  const [userRole] = useState(
+    () => localStorage.getItem("jt_user_role") ?? "Super Admin",
+  );
 
-  const openCreateDialog = () => {
-    setEditingClient(null);
-    setForm(defaultClientForm);
-    setDialogOpen(true);
-  };
+  useEffect(() => {
+    if (settingsQuery.data) {
+      setForm(settingsQuery.data);
+    }
+  }, [settingsQuery.data]);
 
-  const openEditDialog = (client: Client) => {
-    setEditingClient(client);
-    setForm({
-      clientName: client.clientName,
-      gstNumber: client.gstNumber,
-      address: client.address,
-    });
-    setDialogOpen(true);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      if (editingClient) {
-        await updateClient.mutateAsync({ id: editingClient.id, ...form });
-        toast.success("Client updated");
-      } else {
-        await createClient.mutateAsync(form);
-        toast.success("Client added");
-      }
-      setDialogOpen(false);
+      await saveSettings.mutateAsync(form);
+      toast.success("Settings saved successfully");
     } catch {
-      toast.error("Failed to save client.");
+      toast.error("Failed to save settings.");
     }
   };
-
-  const handleDelete = async () => {
-    if (!deleteConfirm) return;
-    try {
-      await deleteClient.mutateAsync(deleteConfirm.id);
-      toast.success("Client deleted");
-      setDeleteConfirm(null);
-    } catch {
-      toast.error("Failed to delete client.");
-    }
-  };
-
-  const isSaving = createClient.isPending || updateClient.isPending;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">
-          {clients.length} clients
-        </p>
-        <Button
-          onClick={openCreateDialog}
-          size="sm"
-          className="gap-2 text-xs"
-          data-ocid="settings.clients.new_button"
+    <div className="p-6 space-y-6" data-ocid="settings.page">
+      <div className="flex items-center gap-3">
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded-lg"
+          style={{ background: "oklch(0.55 0.18 240 / 0.12)" }}
         >
-          <Plus className="h-3.5 w-3.5" />
-          Add Client
-        </Button>
+          <Settings
+            className="h-4 w-4"
+            style={{ color: "oklch(0.55 0.18 240)" }}
+          />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold font-display text-foreground">
+            Settings
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Configure your ERP preferences
+          </p>
+        </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        {clientsQuery.isLoading ? (
-          <div className="p-6 space-y-3">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-10 w-full" />
-            ))}
-          </div>
-        ) : clients.length === 0 ? (
-          <div
-            className="flex flex-col items-center justify-center py-12"
-            data-ocid="settings.clients.empty_state"
-          >
-            <p className="text-sm text-muted-foreground">
-              No clients registered yet
-            </p>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/40 hover:bg-muted/40">
-                <TableHead className="text-xs font-semibold">
-                  Client Name
-                </TableHead>
-                <TableHead className="text-xs font-semibold">
-                  GST Number
-                </TableHead>
-                <TableHead className="text-xs font-semibold">Address</TableHead>
-                <TableHead className="text-xs font-semibold text-right">
-                  Actions
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {clients.map((client, index) => (
-                <TableRow
-                  key={client.id.toString()}
-                  className="table-row-hover"
-                  data-ocid={`settings.clients.item.${index + 1}`}
-                >
-                  <TableCell className="text-xs font-medium">
-                    {client.clientName}
-                  </TableCell>
-                  <TableCell className="text-xs font-mono">
-                    {client.gstNumber || "-"}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">
-                    {client.address || "-"}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEditDialog(client)}
-                        className="h-7 w-7 p-0"
-                        data-ocid={`settings.clients.edit_button.${index + 1}`}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDeleteConfirm(client)}
-                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        data-ocid={`settings.clients.delete_button.${index + 1}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </div>
-
-      {/* Client Form Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md" data-ocid="settings.clients.modal">
-          <DialogHeader>
-            <DialogTitle className="font-display">
-              {editingClient ? "Edit Client" : "Add Client"}
-            </DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
+        {/* Company Details */}
+        <Card className="border border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold font-display">
+              Company Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="clientName" className="text-xs">
-                Client Name *
+              <Label htmlFor="company-name" className="text-xs">
+                Company Name
               </Label>
               <Input
-                id="clientName"
-                placeholder="Company or person name"
-                value={form.clientName}
+                id="company-name"
+                value={form.companyName}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, clientName: e.target.value }))
+                  setForm((p) => ({ ...p, companyName: e.target.value }))
                 }
-                required
                 className="text-xs"
-                data-ocid="settings.clients.form.client_name_input"
+                data-ocid="settings.company_name.input"
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="gstNumber" className="text-xs">
-                GST Number
-              </Label>
-              <Input
-                id="gstNumber"
-                placeholder="27AABCU9603R1ZX"
-                value={form.gstNumber}
-                onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
-                    gstNumber: e.target.value.toUpperCase(),
-                  }))
-                }
-                className="text-xs font-mono"
-                data-ocid="settings.clients.form.gst_input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="address" className="text-xs">
+              <Label htmlFor="company-address" className="text-xs">
                 Address
               </Label>
               <Input
-                id="address"
-                placeholder="Full address"
-                value={form.address}
+                id="company-address"
+                placeholder="Company address"
+                value={form.companyAddress}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, address: e.target.value }))
+                  setForm((p) => ({ ...p, companyAddress: e.target.value }))
                 }
                 className="text-xs"
-                data-ocid="settings.clients.form.address_input"
+                data-ocid="settings.company_address.input"
               />
             </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-                data-ocid="settings.clients.form.cancel_button"
-                className="text-xs"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={isSaving}
-                data-ocid="settings.clients.form.submit_button"
-                className="text-xs"
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    Saving...
-                  </>
-                ) : editingClient ? (
-                  "Update"
-                ) : (
-                  "Add Client"
-                )}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+            <div className="space-y-1.5">
+              <Label htmlFor="company-gst" className="text-xs">
+                GST Number
+              </Label>
+              <Input
+                id="company-gst"
+                placeholder="21ABCDE1234F1Z5"
+                value={form.companyGST}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    companyGST: e.target.value.toUpperCase(),
+                  }))
+                }
+                className="text-xs uppercase"
+                data-ocid="settings.company_gst.input"
+              />
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Delete Confirm */}
-      <Dialog
-        open={!!deleteConfirm}
-        onOpenChange={() => setDeleteConfirm(null)}
-      >
-        <DialogContent
-          className="max-w-sm"
-          data-ocid="settings.clients.delete_modal"
+        {/* ERP Configuration */}
+        <Card className="border border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold font-display">
+              ERP Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="gps-ded" className="text-xs">
+                GPS Deduction (₹/trip)
+              </Label>
+              <Input
+                id="gps-ded"
+                type="number"
+                min="0"
+                step="1"
+                value={form.gpsDeduction}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    gpsDeduction: Number(e.target.value),
+                  }))
+                }
+                className="text-xs"
+                data-ocid="settings.gps_deduction.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="challan-rate" className="text-xs">
+                Challan Rate (₹)
+              </Label>
+              <Input
+                id="challan-rate"
+                type="number"
+                min="0"
+                step="50"
+                value={form.challanRate}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    challanRate: Number(e.target.value),
+                  }))
+                }
+                className="text-xs"
+                data-ocid="settings.challan_rate.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="shortage-rate" className="text-xs">
+                Shortage Rate (₹/MT)
+              </Label>
+              <Input
+                id="shortage-rate"
+                type="number"
+                min="0"
+                step="100"
+                value={form.shortageRate}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    shortageRate: Number(e.target.value),
+                  }))
+                }
+                className="text-xs"
+                data-ocid="settings.shortage_rate.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gst-rate" className="text-xs">
+                GST Rate (%)
+              </Label>
+              <Input
+                id="gst-rate"
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={form.gstRate}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, gstRate: Number(e.target.value) }))
+                }
+                className="text-xs"
+                data-ocid="settings.gst_rate.input"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* User Profile */}
+        <Card className="border border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold font-display">
+              User Profile
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Current Role
+                </p>
+                <p className="text-sm font-semibold mt-0.5">{userRole}</p>
+              </div>
+              <div
+                className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold"
+                style={{
+                  background: "oklch(0.72 0.18 60 / 0.15)",
+                  color: "oklch(0.72 0.18 60)",
+                }}
+              >
+                {(userRole || "A").charAt(0).toUpperCase()}
+              </div>
+            </div>
+            <Separator />
+            <p className="text-xs text-muted-foreground">
+              Roles available: {ROLES.join(", ")}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Button
+          type="submit"
+          disabled={saveSettings.isPending}
+          data-ocid="settings.submit_button"
         >
-          <DialogHeader>
-            <DialogTitle className="font-display">Delete Client</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Delete client <strong>{deleteConfirm?.clientName}</strong>?
-          </p>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirm(null)}
-              data-ocid="settings.clients.delete_cancel_button"
-              className="text-xs"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteClient.isPending}
-              data-ocid="settings.clients.delete_confirm_button"
-              className="text-xs"
-            >
-              {deleteClient.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-// =================== PROFILE SECTION ===================
-function ProfileTab() {
-  const profileQuery = useGetUserProfile();
-  const saveProfile = useSaveUserProfile();
-  const [name, setName] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  // Initialize from profile
-  const profile = profileQuery.data;
-  const currentName = name || profile?.name || "";
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentName.trim()) return;
-    try {
-      await saveProfile.mutateAsync({ name: currentName.trim() });
-      toast.success("Profile saved successfully");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch {
-      toast.error("Failed to save profile.");
-    }
-  };
-
-  return (
-    <div className="max-w-md space-y-4">
-      <div>
-        <p className="text-sm font-medium text-foreground">User Profile</p>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Update your display name for the ERP system
-        </p>
-      </div>
-
-      {profileQuery.isLoading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-9 w-full" />
-        </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="profileName" className="text-xs">
-              Full Name *
-            </Label>
-            <Input
-              id="profileName"
-              placeholder="Your full name"
-              value={name || profile?.name || ""}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="text-xs"
-              data-ocid="settings.profile.name_input"
-            />
-          </div>
-          <Button
-            type="submit"
-            disabled={saveProfile.isPending}
-            className="gap-2 text-xs"
-            data-ocid="settings.profile.save_button"
-          >
-            {saveProfile.isPending ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Saving...
-              </>
-            ) : saved ? (
-              <>
-                <Save className="h-3.5 w-3.5" />
-                Saved!
-              </>
-            ) : (
-              <>
-                <Save className="h-3.5 w-3.5" />
-                Save Profile
-              </>
-            )}
-          </Button>
-        </form>
-      )}
-    </div>
-  );
-}
-
-// =================== MAIN SETTINGS PAGE ===================
-export default function SettingsPage() {
-  return (
-    <div className="p-6 space-y-5" data-ocid="settings.page">
-      <div>
-        <h2 className="text-lg font-bold font-display text-foreground">
-          Settings
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Manage clients and your profile
-        </p>
-      </div>
-
-      <Tabs defaultValue="clients" className="space-y-4">
-        <TabsList className="h-9 bg-muted/50">
-          <TabsTrigger
-            value="clients"
-            className="text-xs h-7"
-            data-ocid="settings.clients.tab"
-          >
-            Clients
-          </TabsTrigger>
-          <TabsTrigger
-            value="profile"
-            className="text-xs h-7"
-            data-ocid="settings.profile.tab"
-          >
-            Profile
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="clients">
-          <ClientsTab />
-        </TabsContent>
-        <TabsContent value="profile">
-          <ProfileTab />
-        </TabsContent>
-      </Tabs>
+          {saveSettings.isPending ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Save Settings"
+          )}
+        </Button>
+      </form>
     </div>
   );
 }

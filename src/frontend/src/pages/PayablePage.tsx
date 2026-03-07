@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -30,29 +31,29 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
+  CheckCircle,
+  Clock,
+  CreditCard,
   Loader2,
   Pencil,
-  Plus,
-  Trash2,
   TrendingDown,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   type Payable,
-  useCreatePayable,
-  useDeletePayable,
+  syncPayablesFromUnloadings,
+  useGetAllLoadingTrips,
   useGetAllPayables,
+  useGetAllUnloadings,
+  useGetAllVehicles,
   useUpdatePayable,
 } from "../hooks/useQueries";
-import { formatCurrency, formatDate } from "../utils/format";
+import { formatCurrency, formatDate, formatNumber } from "../utils/format";
 
-interface PayableFormData {
-  date: string;
-  vehicleNumber: string;
-  ownerName: string;
-  tripReference: string;
-  totalPayable: string;
+const PAYMENT_MODES = ["Cash", "NEFT", "RTGS", "Cheque", "Online"];
+
+interface PaymentFormData {
   amountPaid: string;
   paymentDate: string;
   paymentMode: string;
@@ -60,12 +61,7 @@ interface PayableFormData {
   remarks: string;
 }
 
-const defaultForm: PayableFormData = {
-  date: "",
-  vehicleNumber: "",
-  ownerName: "",
-  tripReference: "",
-  totalPayable: "",
+const defaultPaymentForm: PaymentFormData = {
   amountPaid: "",
   paymentDate: "",
   paymentMode: "",
@@ -73,129 +69,172 @@ const defaultForm: PayableFormData = {
   remarks: "",
 };
 
-const PAYMENT_MODES = ["Cash", "NEFT", "RTGS", "Cheque", "Online"];
-
 function getRowClass(status: string) {
   switch (status) {
     case "paid":
       return "bg-green-50/50 hover:bg-green-50";
     case "partial":
       return "bg-amber-50/50 hover:bg-amber-50";
+    case "payment_requested":
+      return "bg-blue-50/50 hover:bg-blue-50";
     default:
       return "bg-red-50/30 hover:bg-red-50/50";
   }
 }
 
-function getStatusClass(status: string) {
+function getStatusLabel(status: string) {
   switch (status) {
     case "paid":
-      return "status-paid";
+      return { label: "Paid", cls: "status-paid" };
     case "partial":
-      return "status-partial";
+      return { label: "Partial", cls: "status-partial" };
+    case "payment_requested":
+      return {
+        label: "Requested",
+        cls: "bg-blue-50 text-blue-700 border-blue-200",
+      };
     default:
-      return "status-pending";
+      return { label: "Pending", cls: "status-pending" };
   }
 }
 
 export default function PayablePage() {
   const payablesQuery = useGetAllPayables();
-  const createPayable = useCreatePayable();
+  const unloadingsQuery = useGetAllUnloadings();
+  const loadingTripsQuery = useGetAllLoadingTrips();
+  const vehiclesQuery = useGetAllVehicles();
   const updatePayable = useUpdatePayable();
-  const deletePayable = useDeletePayable();
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<Payable | null>(null);
-  const [form, setForm] = useState<PayableFormData>(defaultForm);
-  const [deleteConfirm, setDeleteConfirm] = useState<Payable | null>(null);
-  const [activeTab, setActiveTab] = useState("all");
+  const [activeTab, setActiveTab] = useState("pending");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [paymentDialog, setPaymentDialog] = useState<Payable | null>(null);
+  const [paymentForm, setPaymentForm] =
+    useState<PaymentFormData>(defaultPaymentForm);
 
   const allRecords = payablesQuery.data ?? [];
+  const unloadings = unloadingsQuery.data ?? [];
+  const trips = loadingTripsQuery.data ?? [];
+  const vehicles = vehiclesQuery.data ?? [];
+
+  // Auto-sync payables from unloading records
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — sync only when data counts change
+  useEffect(() => {
+    if (unloadings.length > 0 || trips.length > 0) {
+      syncPayablesFromUnloadings(unloadings, trips, vehicles);
+      payablesQuery.refetch();
+    }
+  }, [unloadings.length, trips.length, vehicles.length]);
+
+  const summaryStats = useMemo(() => {
+    const totalPayable = allRecords.reduce((s, r) => s + r.totalPayable, 0);
+    const totalPaid = allRecords.reduce((s, r) => s + r.amountPaid, 0);
+    const outstanding = allRecords
+      .filter((r) => r.status !== "paid")
+      .reduce((s, r) => s + r.balance, 0);
+    const requestedCount = allRecords.filter(
+      (r) => r.status === "payment_requested",
+    ).length;
+    return { totalPayable, totalPaid, outstanding, requestedCount };
+  }, [allRecords]);
 
   const filteredRecords = useMemo(() => {
     if (activeTab === "all") return allRecords;
     return allRecords.filter((r) => r.status === activeTab);
   }, [allRecords, activeTab]);
 
-  const summaryStats = useMemo(() => {
-    const totalPayable = allRecords.reduce((s, r) => s + r.totalPayable, 0);
-    const totalPaid = allRecords.reduce((s, r) => s + r.amountPaid, 0);
-    const totalOutstanding = allRecords
-      .filter((r) => r.status !== "paid")
-      .reduce((s, r) => s + r.balance, 0);
-    return { totalPayable, totalPaid, totalOutstanding };
-  }, [allRecords]);
-
-  const totalPayableAmt = Number(form.totalPayable || 0);
-  const amountPaid = Number(form.amountPaid || 0);
-  const previewBalance = Math.max(0, totalPayableAmt - amountPaid);
-
-  const openCreateDialog = () => {
-    setEditingRecord(null);
-    setForm(defaultForm);
-    setDialogOpen(true);
+  const handleSelectToggle = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  const openEditDialog = (record: Payable) => {
-    setEditingRecord(record);
-    setForm({
-      date: record.date,
-      vehicleNumber: record.vehicleNumber,
-      ownerName: record.ownerName,
-      tripReference: record.tripReference,
-      totalPayable: record.totalPayable.toString(),
-      amountPaid: record.amountPaid.toString(),
+  const handleSelectAll = () => {
+    const pendingInTab = filteredRecords.filter((r) => r.status === "pending");
+    if (selectedIds.size === pendingInTab.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(pendingInTab.map((r) => r.id.toString())));
+    }
+  };
+
+  const handleRequestPayment = async () => {
+    if (selectedIds.size === 0) return;
+    const toUpdate = allRecords.filter((r) => selectedIds.has(r.id.toString()));
+    try {
+      await Promise.all(
+        toUpdate.map((r) =>
+          updatePayable.mutateAsync({
+            ...r,
+            status: "payment_requested",
+          }),
+        ),
+      );
+      toast.success(
+        `${toUpdate.length} record${toUpdate.length > 1 ? "s" : ""} marked as Payment Requested`,
+      );
+      setSelectedIds(new Set());
+      setActiveTab("payment_requested");
+    } catch {
+      toast.error("Failed to update payment requests.");
+    }
+  };
+
+  const openPaymentDialog = (record: Payable) => {
+    setPaymentDialog(record);
+    setPaymentForm({
+      amountPaid: record.amountPaid > 0 ? record.amountPaid.toString() : "",
       paymentDate: record.paymentDate,
       paymentMode: record.paymentMode,
       referenceNumber: record.referenceNumber,
       remarks: record.remarks,
     });
-    setDialogOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleProcessPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    const data = {
-      date: form.date,
-      vehicleNumber: form.vehicleNumber,
-      ownerName: form.ownerName,
-      tripReference: form.tripReference,
-      totalPayable: totalPayableAmt,
-      amountPaid,
-      paymentDate: form.paymentDate,
-      paymentMode: form.paymentMode,
-      referenceNumber: form.referenceNumber,
-      remarks: form.remarks,
-    };
+    if (!paymentDialog) return;
+    const paid = Number(paymentForm.amountPaid || 0);
     try {
-      if (editingRecord) {
-        await updatePayable.mutateAsync({ id: editingRecord.id, ...data });
-        toast.success("Record updated");
-      } else {
-        await createPayable.mutateAsync(data);
-        toast.success("Payable recorded");
-      }
-      setDialogOpen(false);
+      await updatePayable.mutateAsync({
+        ...paymentDialog,
+        amountPaid: paid,
+        paymentDate: paymentForm.paymentDate,
+        paymentMode: paymentForm.paymentMode,
+        referenceNumber: paymentForm.referenceNumber,
+        remarks: paymentForm.remarks,
+        status: paymentDialog.status, // let mutation recalculate
+      });
+      toast.success("Payment recorded successfully");
+      setPaymentDialog(null);
     } catch {
-      toast.error("Failed to save record.");
+      toast.error("Failed to process payment.");
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteConfirm) return;
-    try {
-      await deletePayable.mutateAsync(deleteConfirm.id);
-      toast.success("Record deleted");
-      setDeleteConfirm(null);
-    } catch {
-      toast.error("Failed to delete.");
-    }
+  const isUpdating = updatePayable.isPending;
+
+  const tabCounts = {
+    all: allRecords.length,
+    pending: allRecords.filter((r) => r.status === "pending").length,
+    payment_requested: allRecords.filter(
+      (r) => r.status === "payment_requested",
+    ).length,
+    partial: allRecords.filter((r) => r.status === "partial").length,
+    paid: allRecords.filter((r) => r.status === "paid").length,
   };
 
-  const isSaving = createPayable.isPending || updatePayable.isPending;
+  const showCheckboxes = activeTab === "pending" || activeTab === "all";
+  const pendingInCurrentTab = filteredRecords.filter(
+    (r) => r.status === "pending",
+  );
 
   return (
     <div className="p-6 space-y-5" data-ocid="payable.page">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2">
             <TrendingDown
@@ -207,21 +246,29 @@ export default function PayablePage() {
             </h2>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {allRecords.length} payable records
+            {allRecords.length} vehicle payment records — auto-synced from
+            unloading
           </p>
         </div>
-        <Button
-          onClick={openCreateDialog}
-          className="gap-2"
-          data-ocid="payable.primary_button"
-        >
-          <Plus className="h-4 w-4" />
-          Add Record
-        </Button>
+        {selectedIds.size > 0 && (
+          <Button
+            onClick={handleRequestPayment}
+            className="gap-2"
+            disabled={isUpdating}
+            data-ocid="payable.request_payment.primary_button"
+          >
+            {isUpdating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CreditCard className="h-4 w-4" />
+            )}
+            Request Payment ({selectedIds.size} selected)
+          </Button>
+        )}
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Card className="border border-border">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">
@@ -245,21 +292,21 @@ export default function PayablePage() {
             </p>
           </CardContent>
         </Card>
-        <Card className="border border-border col-span-2 sm:col-span-1">
+        <Card className="border border-border">
           <CardContent className="p-4">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                  Total Outstanding
+                  Outstanding
                 </p>
                 <p
                   className="mt-1 text-xl font-bold font-display"
                   style={{ color: "oklch(0.45 0.2 27)" }}
                 >
-                  {formatCurrency(summaryStats.totalOutstanding)}
+                  {formatCurrency(summaryStats.outstanding)}
                 </p>
               </div>
-              {summaryStats.totalOutstanding > 0 && (
+              {summaryStats.outstanding > 0 && (
                 <AlertTriangle
                   className="h-5 w-5"
                   style={{ color: "oklch(0.577 0.245 27)" }}
@@ -268,43 +315,90 @@ export default function PayablePage() {
             </div>
           </CardContent>
         </Card>
+        <Card className="border border-border">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">
+              Payment Requests
+            </p>
+            <p
+              className="mt-1 text-xl font-bold font-display"
+              style={{ color: "oklch(0.55 0.18 230)" }}
+            >
+              {summaryStats.requestedCount}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Awaiting approval
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Filter Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="h-8">
-          <TabsTrigger
-            value="all"
-            className="text-xs"
-            data-ocid="payable.all.tab"
-          >
-            All ({allRecords.length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="pending"
-            className="text-xs"
-            data-ocid="payable.pending.tab"
-          >
-            Pending ({allRecords.filter((r) => r.status === "pending").length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="partial"
-            className="text-xs"
-            data-ocid="payable.partial.tab"
-          >
-            Partial ({allRecords.filter((r) => r.status === "partial").length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="paid"
-            className="text-xs"
-            data-ocid="payable.paid.tab"
-          >
-            Paid ({allRecords.filter((r) => r.status === "paid").length})
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {/* Tabs */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => {
+            setActiveTab(v);
+            setSelectedIds(new Set());
+          }}
+        >
+          <TabsList className="h-8">
+            <TabsTrigger
+              value="all"
+              className="text-xs"
+              data-ocid="payable.all.tab"
+            >
+              All ({tabCounts.all})
+            </TabsTrigger>
+            <TabsTrigger
+              value="pending"
+              className="text-xs"
+              data-ocid="payable.pending.tab"
+            >
+              Pending ({tabCounts.pending})
+            </TabsTrigger>
+            <TabsTrigger
+              value="payment_requested"
+              className="text-xs"
+              data-ocid="payable.requested.tab"
+            >
+              Requested ({tabCounts.payment_requested})
+            </TabsTrigger>
+            <TabsTrigger
+              value="partial"
+              className="text-xs"
+              data-ocid="payable.partial.tab"
+            >
+              Partial ({tabCounts.partial})
+            </TabsTrigger>
+            <TabsTrigger
+              value="paid"
+              className="text-xs"
+              data-ocid="payable.paid.tab"
+            >
+              Paid ({tabCounts.paid})
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {showCheckboxes && pendingInCurrentTab.length > 0 && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={
+                selectedIds.size === pendingInCurrentTab.length &&
+                pendingInCurrentTab.length > 0
+              }
+              onCheckedChange={handleSelectAll}
+              id="selectAll"
+              data-ocid="payable.select_all.checkbox"
+            />
+            <Label htmlFor="selectAll" className="text-xs cursor-pointer">
+              Select All Pending ({pendingInCurrentTab.length})
+            </Label>
+          </div>
+        )}
+      </div>
 
-      {/* Table */}
+      {/* Grid Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {payablesQuery.isLoading ? (
           <div className="p-6 space-y-3" data-ocid="payable.loading_state">
@@ -319,10 +413,10 @@ export default function PayablePage() {
           >
             <TrendingDown className="h-10 w-10 text-muted-foreground/30 mb-3" />
             <p className="text-sm text-muted-foreground">
-              No payable records found
+              No payable records in this category
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Add a payment due to a vehicle owner to get started
+              Payables are auto-created from unloading records
             </p>
           </div>
         ) : (
@@ -330,16 +424,56 @@ export default function PayablePage() {
             <Table data-ocid="payable.table">
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="text-xs font-semibold">Date</TableHead>
+                  {showCheckboxes && (
+                    <TableHead className="w-10 text-xs font-semibold">
+                      Sel
+                    </TableHead>
+                  )}
+                  <TableHead className="text-xs font-semibold">
+                    Trip ID
+                  </TableHead>
                   <TableHead className="text-xs font-semibold">
                     Vehicle No
                   </TableHead>
                   <TableHead className="text-xs font-semibold">Owner</TableHead>
                   <TableHead className="text-xs font-semibold">
-                    Trip Ref
+                    Load Date
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
-                    Total Payable
+                    Load Qty
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Unload Qty
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Booking Amt
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Shortage
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    GPS
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Challan
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Toll
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Advance
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    HSD
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Cash TDS
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Penalty
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-right">
+                    Net Payable
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     Paid
@@ -348,379 +482,480 @@ export default function PayablePage() {
                     Balance
                   </TableHead>
                   <TableHead className="text-xs font-semibold">
-                    Pay Mode
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold">
-                    Ref No
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold">
                     Status
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
-                    Actions
+                    Action
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredRecords.map((record, index) => (
-                  <TableRow
-                    key={record.id.toString()}
-                    className={cn(
-                      "transition-colors",
-                      getRowClass(record.status),
-                    )}
-                    data-ocid={`payable.item.${index + 1}`}
-                  >
-                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                      {formatDate(record.date)}
-                    </TableCell>
-                    <TableCell className="text-xs font-mono font-medium">
-                      {record.vehicleNumber}
-                    </TableCell>
-                    <TableCell className="text-xs font-medium max-w-[100px] truncate">
-                      {record.ownerName || "-"}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground font-mono">
-                      {record.tripReference || "-"}
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      {formatCurrency(record.totalPayable)}
-                    </TableCell>
-                    <TableCell
-                      className="text-xs text-right"
-                      style={{ color: "oklch(0.4 0.16 150)" }}
+                {filteredRecords.map((record, index) => {
+                  const { label, cls } = getStatusLabel(record.status);
+                  const isSelectable = record.status === "pending";
+                  const isSelected = selectedIds.has(record.id.toString());
+                  return (
+                    <TableRow
+                      key={record.id.toString()}
+                      className={cn(
+                        "transition-colors",
+                        getRowClass(record.status),
+                      )}
+                      data-ocid={`payable.item.${index + 1}`}
                     >
-                      {formatCurrency(record.amountPaid)}
-                    </TableCell>
-                    <TableCell
-                      className="text-xs text-right font-semibold"
-                      style={{
-                        color:
-                          record.balance > 0
+                      {showCheckboxes && (
+                        <TableCell>
+                          {isSelectable && (
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={() =>
+                                handleSelectToggle(record.id.toString())
+                              }
+                              data-ocid={`payable.checkbox.${index + 1}`}
+                            />
+                          )}
+                        </TableCell>
+                      )}
+                      <TableCell className="text-xs font-mono font-medium text-primary whitespace-nowrap">
+                        {record.tripReference}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono font-medium whitespace-nowrap">
+                        {record.vehicleNumber}
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[80px] truncate">
+                        {record.ownerName || "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                        {record.loadingDate
+                          ? formatDate(record.loadingDate)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right">
+                        {record.loadingQty
+                          ? formatNumber(record.loadingQty)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right">
+                        {record.unloadingQty
+                          ? formatNumber(record.unloadingQty)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right font-medium">
+                        {formatCurrency(record.bookingAmount ?? 0)}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs text-right"
+                        style={{
+                          color: record.shortageDeduction
                             ? "oklch(0.45 0.2 27)"
-                            : "oklch(0.4 0.16 150)",
-                      }}
-                    >
-                      {formatCurrency(record.balance)}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {record.paymentMode || "-"}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground font-mono">
-                      {record.referenceNumber || "-"}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded border capitalize ${getStatusClass(record.status)}`}
+                            : undefined,
+                        }}
                       >
-                        {record.status}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(record)}
-                          className="h-7 w-7 p-0"
-                          data-ocid={`payable.edit_button.${index + 1}`}
+                        {record.shortageDeduction
+                          ? formatCurrency(record.shortageDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right text-muted-foreground">
+                        {record.gpsDeduction
+                          ? formatCurrency(record.gpsDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right text-muted-foreground">
+                        {record.challanDeduction
+                          ? formatCurrency(record.challanDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs text-right"
+                        style={{
+                          color: record.tollCharges
+                            ? "oklch(0.4 0.16 150)"
+                            : undefined,
+                        }}
+                      >
+                        {record.tollCharges
+                          ? `+${formatCurrency(record.tollCharges)}`
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right text-muted-foreground">
+                        {record.advanceDeduction
+                          ? formatCurrency(record.advanceDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right text-muted-foreground">
+                        {record.hsdDeduction
+                          ? formatCurrency(record.hsdDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right text-muted-foreground">
+                        {record.cashTdsDeduction
+                          ? formatCurrency(record.cashTdsDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs text-right"
+                        style={{
+                          color: record.penaltyDeduction
+                            ? "oklch(0.45 0.2 27)"
+                            : undefined,
+                        }}
+                      >
+                        {record.penaltyDeduction
+                          ? formatCurrency(record.penaltyDeduction)
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right font-bold text-foreground whitespace-nowrap">
+                        {formatCurrency(record.totalPayable)}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs text-right"
+                        style={{ color: "oklch(0.4 0.16 150)" }}
+                      >
+                        {record.amountPaid > 0
+                          ? formatCurrency(record.amountPaid)
+                          : "-"}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs text-right font-semibold whitespace-nowrap"
+                        style={{
+                          color:
+                            record.balance > 0
+                              ? "oklch(0.45 0.2 27)"
+                              : "oklch(0.4 0.16 150)",
+                        }}
+                      >
+                        {formatCurrency(record.balance)}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded border whitespace-nowrap ${cls}`}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(record)}
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          data-ocid={`payable.delete_button.${index + 1}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          {label}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {(record.status === "payment_requested" ||
+                          record.status === "partial") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openPaymentDialog(record)}
+                            className="h-7 gap-1 px-2 text-[10px] whitespace-nowrap"
+                            data-ocid={`payable.pay_button.${index + 1}`}
+                          >
+                            <CheckCircle className="h-3 w-3" />
+                            Pay
+                          </Button>
+                        )}
+                        {record.status === "paid" && (
+                          <div className="flex items-center justify-end gap-1">
+                            <CheckCircle
+                              className="h-4 w-4"
+                              style={{ color: "oklch(0.4 0.16 150)" }}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openPaymentDialog(record)}
+                              className="h-7 w-7 p-0"
+                              data-ocid={`payable.edit_button.${index + 1}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        )}
+                        {record.status === "pending" && (
+                          <span className="flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
+                            <Clock className="h-3 w-3" />
+                            Select to request
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
         )}
       </div>
 
-      {/* Form Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl" data-ocid="payable.dialog">
-          <DialogHeader>
-            <DialogTitle className="font-display">
-              {editingRecord ? "Edit Payable Record" : "Add Payable Record"}
-            </DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="payDate" className="text-xs">
-                  Date *
-                </Label>
-                <Input
-                  id="payDate"
-                  type="date"
-                  value={form.date}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, date: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="payable.date.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="payVehicle" className="text-xs">
-                  Vehicle Number *
-                </Label>
-                <Input
-                  id="payVehicle"
-                  placeholder="e.g. OD03AB6655"
-                  value={form.vehicleNumber}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, vehicleNumber: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="payable.vehicle_number.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="payOwner" className="text-xs">
-                  Owner Name
-                </Label>
-                <Input
-                  id="payOwner"
-                  placeholder="Vehicle owner name"
-                  value={form.ownerName}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, ownerName: e.target.value }))
-                  }
-                  className="text-xs"
-                  data-ocid="payable.owner_name.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="payTripRef" className="text-xs">
-                  Trip Reference
-                </Label>
-                <Input
-                  id="payTripRef"
-                  placeholder="e.g. LT-00001"
-                  value={form.tripReference}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, tripReference: e.target.value }))
-                  }
-                  className="text-xs"
-                  data-ocid="payable.trip_reference.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="payTotal" className="text-xs">
-                  Total Payable (₹) *
-                </Label>
-                <Input
-                  id="payTotal"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.totalPayable}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, totalPayable: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="payable.total_payable.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="payPaid" className="text-xs">
-                  Amount Paid (₹)
-                </Label>
-                <Input
-                  id="payPaid"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.amountPaid}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, amountPaid: e.target.value }))
-                  }
-                  className="text-xs"
-                  data-ocid="payable.amount_paid.input"
-                />
-              </div>
-            </div>
-
-            {/* Auto-calculated balance */}
-            <div className="rounded-md bg-muted/50 border border-border p-3">
-              <p className="text-xs text-muted-foreground">
-                Auto-calculated Balance
-              </p>
-              <p
-                className="text-base font-bold font-display mt-1"
-                style={{
-                  color:
-                    previewBalance > 0
-                      ? "oklch(0.45 0.2 27)"
-                      : "oklch(0.4 0.16 150)",
-                }}
-              >
-                {formatCurrency(previewBalance)}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="payPayDate" className="text-xs">
-                  Payment Date
-                </Label>
-                <Input
-                  id="payPayDate"
-                  type="date"
-                  value={form.paymentDate}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, paymentDate: e.target.value }))
-                  }
-                  className="text-xs"
-                  data-ocid="payable.payment_date.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Payment Mode</Label>
-                <Select
-                  value={form.paymentMode}
-                  onValueChange={(v) =>
-                    setForm((p) => ({ ...p, paymentMode: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="payable.payment_mode.select"
-                  >
-                    <SelectValue placeholder="Select mode" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAYMENT_MODES.map((m) => (
-                      <SelectItem key={m} value={m} className="text-xs">
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="payRefNo" className="text-xs">
-                  Reference Number
-                </Label>
-                <Input
-                  id="payRefNo"
-                  placeholder="Cheque / UTR / Reference"
-                  value={form.referenceNumber}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, referenceNumber: e.target.value }))
-                  }
-                  className="text-xs"
-                  data-ocid="payable.reference_number.input"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="payRemarks" className="text-xs">
-                Remarks
-              </Label>
-              <Textarea
-                id="payRemarks"
-                placeholder="Additional notes..."
-                value={form.remarks}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, remarks: e.target.value }))
-                }
-                className="text-xs resize-none"
-                rows={2}
-                data-ocid="payable.remarks.textarea"
-              />
-            </div>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-                data-ocid="payable.cancel_button"
-                className="text-xs"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={isSaving}
-                data-ocid="payable.submit_button"
-                className="text-xs"
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    Saving...
-                  </>
-                ) : editingRecord ? (
-                  "Update"
-                ) : (
-                  "Add Record"
-                )}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirm */}
+      {/* Process Payment Dialog */}
       <Dialog
-        open={!!deleteConfirm}
-        onOpenChange={() => setDeleteConfirm(null)}
+        open={!!paymentDialog}
+        onOpenChange={() => setPaymentDialog(null)}
       >
-        <DialogContent className="max-w-sm" data-ocid="payable.delete_modal">
+        <DialogContent
+          className="max-w-lg max-h-[90vh] overflow-y-auto"
+          data-ocid="payable.payment.dialog"
+        >
           <DialogHeader>
-            <DialogTitle className="font-display">
-              Delete Payable Record
-            </DialogTitle>
+            <DialogTitle className="font-display">Process Payment</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete this payable record? This action
-            cannot be undone.
-          </p>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirm(null)}
-              data-ocid="payable.delete_cancel_button"
-              className="text-xs"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deletePayable.isPending}
-              data-ocid="payable.delete_confirm_button"
-              className="text-xs"
-            >
-              {deletePayable.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </Button>
-          </DialogFooter>
+          {paymentDialog && (
+            <form onSubmit={handleProcessPayment} className="space-y-4">
+              {/* Trip summary */}
+              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                <p className="text-xs font-semibold text-foreground">
+                  Trip Details
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">Trip ID</p>
+                    <p className="font-mono font-medium">
+                      {paymentDialog.tripReference}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Vehicle</p>
+                    <p className="font-mono font-medium">
+                      {paymentDialog.vehicleNumber}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Owner</p>
+                    <p className="font-medium">
+                      {paymentDialog.ownerName || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Loading Date</p>
+                    <p className="font-medium">
+                      {paymentDialog.loadingDate
+                        ? formatDate(paymentDialog.loadingDate)
+                        : "-"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Deduction breakdown */}
+              <div className="rounded-lg border border-border bg-muted/10 p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-foreground mb-2">
+                  Payment Calculation
+                </p>
+                {[
+                  {
+                    label: "Booking Amount",
+                    value: paymentDialog.bookingAmount,
+                    color: "text-foreground",
+                    prefix: "",
+                  },
+                  {
+                    label: "Shortage Deduction",
+                    value: paymentDialog.shortageDeduction,
+                    color: "text-destructive",
+                    prefix: "−",
+                  },
+                  {
+                    label: "GPS Deduction",
+                    value: paymentDialog.gpsDeduction,
+                    color: "text-muted-foreground",
+                    prefix: "−",
+                  },
+                  {
+                    label: "Challan Deduction",
+                    value: paymentDialog.challanDeduction,
+                    color: "text-muted-foreground",
+                    prefix: "−",
+                  },
+                  {
+                    label: "Toll Charges",
+                    value: paymentDialog.tollCharges,
+                    color: "text-green-700",
+                    prefix: "+",
+                  },
+                  {
+                    label: "Advance Deduction",
+                    value: paymentDialog.advanceDeduction,
+                    color: "text-muted-foreground",
+                    prefix: "−",
+                  },
+                  {
+                    label: "HSD Deduction",
+                    value: paymentDialog.hsdDeduction,
+                    color: "text-muted-foreground",
+                    prefix: "−",
+                  },
+                  {
+                    label: "Cash TDS",
+                    value: paymentDialog.cashTdsDeduction,
+                    color: "text-muted-foreground",
+                    prefix: "−",
+                  },
+                  {
+                    label: "Penalty",
+                    value: paymentDialog.penaltyDeduction,
+                    color: "text-destructive",
+                    prefix: "−",
+                  },
+                ]
+                  .filter((row) => row.value)
+                  .map((row) => (
+                    <div
+                      key={row.label}
+                      className="flex items-center justify-between text-xs"
+                    >
+                      <span className="text-muted-foreground">{row.label}</span>
+                      <span className={row.color}>
+                        {row.prefix}
+                        {formatCurrency(row.value ?? 0)}
+                      </span>
+                    </div>
+                  ))}
+                <div className="flex items-center justify-between text-xs font-bold border-t border-border pt-1.5 mt-1.5">
+                  <span className="text-foreground">Net Payable</span>
+                  <span className="text-foreground">
+                    {formatCurrency(paymentDialog.totalPayable)}
+                  </span>
+                </div>
+                {paymentDialog.amountPaid > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Already Paid</span>
+                    <span style={{ color: "oklch(0.4 0.16 150)" }}>
+                      {formatCurrency(paymentDialog.amountPaid)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="text-foreground">Balance Due</span>
+                  <span style={{ color: "oklch(0.45 0.2 27)" }}>
+                    {formatCurrency(paymentDialog.balance)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="payAmt" className="text-xs">
+                  Amount to Pay (₹) *
+                </Label>
+                <Input
+                  id="payAmt"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder={paymentDialog.balance.toString()}
+                  value={paymentForm.amountPaid}
+                  onChange={(e) =>
+                    setPaymentForm((p) => ({
+                      ...p,
+                      amountPaid: e.target.value,
+                    }))
+                  }
+                  required
+                  className="text-xs"
+                  data-ocid="payable.payment.amount_input"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="payDate" className="text-xs">
+                    Payment Date *
+                  </Label>
+                  <Input
+                    id="payDate"
+                    type="date"
+                    value={paymentForm.paymentDate}
+                    onChange={(e) =>
+                      setPaymentForm((p) => ({
+                        ...p,
+                        paymentDate: e.target.value,
+                      }))
+                    }
+                    required
+                    className="text-xs"
+                    data-ocid="payable.payment.date_input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Payment Mode *</Label>
+                  <Select
+                    value={paymentForm.paymentMode}
+                    onValueChange={(v) =>
+                      setPaymentForm((p) => ({ ...p, paymentMode: v }))
+                    }
+                  >
+                    <SelectTrigger
+                      className="text-xs"
+                      data-ocid="payable.payment.mode_select"
+                    >
+                      <SelectValue placeholder="Select mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_MODES.map((m) => (
+                        <SelectItem key={m} value={m} className="text-xs">
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-2 space-y-1.5">
+                  <Label htmlFor="payRef" className="text-xs">
+                    Reference / UTR / Cheque No
+                  </Label>
+                  <Input
+                    id="payRef"
+                    placeholder="Reference number"
+                    value={paymentForm.referenceNumber}
+                    onChange={(e) =>
+                      setPaymentForm((p) => ({
+                        ...p,
+                        referenceNumber: e.target.value,
+                      }))
+                    }
+                    className="text-xs"
+                    data-ocid="payable.payment.reference_input"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="payRemarks" className="text-xs">
+                  Remarks
+                </Label>
+                <Textarea
+                  id="payRemarks"
+                  placeholder="Additional notes..."
+                  value={paymentForm.remarks}
+                  onChange={(e) =>
+                    setPaymentForm((p) => ({ ...p, remarks: e.target.value }))
+                  }
+                  className="text-xs resize-none"
+                  rows={2}
+                  data-ocid="payable.payment.remarks_textarea"
+                />
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPaymentDialog(null)}
+                  data-ocid="payable.payment.cancel_button"
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isUpdating || !paymentForm.paymentMode}
+                  data-ocid="payable.payment.confirm_button"
+                  className="text-xs"
+                >
+                  {isUpdating ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    "Confirm Payment"
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

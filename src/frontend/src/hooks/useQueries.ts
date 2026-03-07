@@ -695,6 +695,19 @@ export interface Vehicle {
   ownerName: string;
   ownerPhone: string;
   ownerAddress: string;
+  panCard: string;
+  // Bank Account 1
+  bank1AccountHolder: string;
+  bank1BankName: string;
+  bank1AccountNo: string;
+  bank1IFSC: string;
+  bank1Branch: string;
+  // Bank Account 2
+  bank2AccountHolder: string;
+  bank2BankName: string;
+  bank2AccountNo: string;
+  bank2IFSC: string;
+  bank2Branch: string;
   insuranceExpiry: string;
   pollutionExpiry: string;
   fitnessExpiry: string;
@@ -1218,14 +1231,88 @@ export function useDeleteUnloading() {
   });
 }
 
+// =================== LOCAL DIESEL ENTRY (LOCAL STATE) ===================
+export interface LocalDieselEntry {
+  id: bigint;
+  truckId: bigint; // references Vehicle id
+  date: string;
+  vendor: string; // petrol bunk name
+  litre: number;
+  rate: number;
+  total: number;
+  billFile: string; // base64 dataURL of uploaded bill image/pdf
+  remark: string;
+  source: string; // "manual" | "trip"
+  tripRef: string; // trip ID like "LT-00001" if source="trip"
+}
+
+export function useGetAllLocalDieselEntries() {
+  return useQuery<LocalDieselEntry[]>({
+    queryKey: ["localDiesel"],
+    queryFn: async () => loadFromStorage<LocalDieselEntry>("jt_local_diesel"),
+    staleTime: 0,
+  });
+}
+
+export function useCreateLocalDieselEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<LocalDieselEntry, "id">) => {
+      const items = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      const newItem: LocalDieselEntry = { ...data, id: nextId(items) };
+      saveToStorage("jt_local_diesel", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] }),
+  });
+}
+
+export function useUpdateLocalDieselEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: LocalDieselEntry) => {
+      const items = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      saveToStorage(
+        "jt_local_diesel",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] }),
+  });
+}
+
+export function useDeleteLocalDieselEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      saveToStorage(
+        "jt_local_diesel",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] }),
+  });
+}
+
 // =================== RECEIVABLE (LOCAL STATE) ===================
 export interface Receivable {
   id: bigint;
+  billingInvoiceId: bigint; // 0n if manually created
+  invoiceDate: string;
   date: string;
   invoiceNumber: string;
   clientName: string;
+  vehicleNo: string;
+  consignerName: string;
   invoiceAmount: number;
   amountReceived: number;
+  tdsDeduction: number;
+  penaltyAmount: number;
+  penaltyBillFile: string;
   balance: number;
   paymentDate: string;
   paymentMode: string; // Cash | NEFT | RTGS | Cheque | Online
@@ -1237,12 +1324,84 @@ export interface Receivable {
 function calcReceivableStatus(
   invoiceAmount: number,
   amountReceived: number,
+  tdsDeduction = 0,
+  penaltyAmount = 0,
 ): { balance: number; status: string } {
-  const balance = invoiceAmount - amountReceived;
+  const balance = invoiceAmount - amountReceived - tdsDeduction - penaltyAmount;
   let status = "pending";
   if (balance <= 0) status = "paid";
-  else if (amountReceived > 0) status = "partial";
+  else if (amountReceived > 0 || tdsDeduction > 0 || penaltyAmount > 0)
+    status = "partial";
   return { balance: Math.max(0, balance), status };
+}
+
+export function syncReceivablesFromInvoices(invoices: BillingInvoice[]): void {
+  const existing = loadFromStorage<Receivable>("jt_receivables");
+  let changed = false;
+  const updated = [...existing];
+
+  for (const invoice of invoices) {
+    const found = existing.find((r) =>
+      bigIntEq(r.billingInvoiceId, invoice.id),
+    );
+    if (!found) {
+      // Create new receivable from invoice
+      const newRec: Receivable = {
+        id: nextId(updated),
+        billingInvoiceId: invoice.id,
+        invoiceDate: invoice.invoiceDate,
+        date: invoice.invoiceDate,
+        invoiceNumber: invoice.invoiceNumber,
+        clientName: invoice.clientName,
+        vehicleNo: invoice.vehicleNo,
+        consignerName: invoice.consignerName,
+        invoiceAmount: invoice.totalAmount,
+        amountReceived: 0,
+        tdsDeduction: 0,
+        penaltyAmount: 0,
+        penaltyBillFile: "",
+        balance: invoice.totalAmount,
+        paymentDate: "",
+        paymentMode: "",
+        referenceNumber: "",
+        remarks: "",
+        status: "pending",
+      };
+      updated.push(newRec);
+      changed = true;
+    } else {
+      // Update invoice amount and client info if changed (preserve payment data)
+      if (
+        found.invoiceAmount !== invoice.totalAmount ||
+        found.clientName !== invoice.clientName ||
+        found.vehicleNo !== invoice.vehicleNo
+      ) {
+        const idx = updated.findIndex((r) => bigIntEq(r.id, found.id));
+        if (idx >= 0) {
+          const { balance, status } = calcReceivableStatus(
+            invoice.totalAmount,
+            found.amountReceived,
+            found.tdsDeduction,
+            found.penaltyAmount,
+          );
+          updated[idx] = {
+            ...found,
+            invoiceAmount: invoice.totalAmount,
+            clientName: invoice.clientName,
+            vehicleNo: invoice.vehicleNo,
+            consignerName: invoice.consignerName,
+            balance,
+            status,
+          };
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (changed) {
+    saveToStorage("jt_receivables", updated);
+  }
 }
 
 export function useGetAllReceivables() {
@@ -1261,6 +1420,8 @@ export function useCreateReceivable() {
       const { balance, status } = calcReceivableStatus(
         data.invoiceAmount,
         data.amountReceived,
+        data.tdsDeduction,
+        data.penaltyAmount,
       );
       const newItem: Receivable = {
         ...data,
@@ -1286,6 +1447,8 @@ export function useUpdateReceivable() {
       const { balance, status } = calcReceivableStatus(
         data.invoiceAmount,
         data.amountReceived,
+        data.tdsDeduction,
+        data.penaltyAmount,
       );
       const updated: Receivable = { ...data, balance, status };
       saveToStorage(
@@ -1316,18 +1479,32 @@ export function useDeleteReceivable() {
 // =================== PAYABLE (LOCAL STATE) ===================
 export interface Payable {
   id: bigint;
+  unloadingId: bigint; // 0n if manually created
+  loadingTripId: bigint;
   date: string;
   vehicleNumber: string;
   ownerName: string;
-  tripReference: string;
-  totalPayable: number;
+  tripReference: string; // trip ID like "LT-00001"
+  loadingDate: string;
+  loadingQty: number;
+  unloadingQty: number;
+  bookingAmount: number;
+  shortageDeduction: number;
+  gpsDeduction: number;
+  challanDeduction: number;
+  tollCharges: number;
+  advanceDeduction: number;
+  hsdDeduction: number;
+  cashTdsDeduction: number;
+  penaltyDeduction: number;
+  totalPayable: number; // = netPayableToVehicle from unloading
   amountPaid: number;
   balance: number;
   paymentDate: string;
   paymentMode: string; // Cash | NEFT | RTGS | Cheque | Online
   referenceNumber: string;
   remarks: string;
-  status: string; // pending | partial | paid
+  status: string; // pending | payment_requested | partial | paid
 }
 
 function calcPayableStatus(
@@ -1339,6 +1516,69 @@ function calcPayableStatus(
   if (balance <= 0) status = "paid";
   else if (amountPaid > 0) status = "partial";
   return { balance: Math.max(0, balance), status };
+}
+
+export function syncPayablesFromUnloadings(
+  unloadings: Unloading[],
+  loadingTrips: LoadingTrip[],
+  vehicles: Vehicle[],
+): void {
+  const existing = loadFromStorage<Payable>("jt_payables");
+  let changed = false;
+  const updated = [...existing];
+
+  for (const unloading of unloadings) {
+    if (unloading.netPayableToVehicle <= 0) continue;
+    const found = existing.find((p) => bigIntEq(p.unloadingId, unloading.id));
+    if (found) continue;
+
+    // Look up the loading trip
+    const trip = loadingTrips.find((t) =>
+      bigIntEq(t.id, unloading.loadingTripId),
+    );
+    if (!trip) continue;
+
+    // Look up vehicle and owner
+    const vehicle = vehicles.find((v) => bigIntEq(v.id, trip.vehicleId));
+    const vehicleNumber = vehicle?.vehicleNumber ?? trip.vehicleId.toString();
+    const ownerName = vehicle?.ownerName ?? "";
+
+    const newPayable: Payable = {
+      id: nextId(updated),
+      unloadingId: unloading.id,
+      loadingTripId: trip.id,
+      date: unloading.unloadingDate,
+      vehicleNumber,
+      ownerName,
+      tripReference: trip.tripId,
+      loadingDate: trip.loadingDate,
+      loadingQty: trip.loadingQty,
+      unloadingQty: unloading.unloadingQty,
+      bookingAmount: unloading.vehicleCost,
+      shortageDeduction: unloading.shortageAmount,
+      gpsDeduction: unloading.gpsDeduction,
+      challanDeduction: unloading.challanDeduction,
+      tollCharges: unloading.tollCharges,
+      advanceDeduction: (trip.advanceCash ?? 0) + (trip.advanceBank ?? 0),
+      hsdDeduction: trip.hsdAmount ?? 0,
+      cashTdsDeduction: unloading.cashTds,
+      penaltyDeduction: unloading.penalty,
+      totalPayable: unloading.netPayableToVehicle,
+      amountPaid: 0,
+      balance: unloading.netPayableToVehicle,
+      paymentDate: "",
+      paymentMode: "",
+      referenceNumber: "",
+      remarks: "",
+      status: "pending",
+    };
+    updated.push(newPayable);
+    changed = true;
+  }
+
+  if (changed) {
+    saveToStorage("jt_payables", updated);
+  }
 }
 
 export function useGetAllPayables() {
@@ -1374,14 +1614,17 @@ export function useCreatePayable() {
 export function useUpdatePayable() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (
-      data: Omit<Payable, "balance" | "status"> & { id: bigint },
-    ) => {
+    mutationFn: async (data: Omit<Payable, "balance"> & { id: bigint }) => {
       const items = loadFromStorage<Payable>("jt_payables");
-      const { balance, status } = calcPayableStatus(
+      const { balance, status: autoStatus } = calcPayableStatus(
         data.totalPayable,
         data.amountPaid,
       );
+      // If data.status is "payment_requested", preserve it unless paid
+      const status =
+        data.status === "payment_requested" && balance > 0
+          ? "payment_requested"
+          : autoStatus;
       const updated: Payable = { ...data, balance, status };
       saveToStorage(
         "jt_payables",
@@ -1500,5 +1743,279 @@ export function useSaveUserProfile() {
     },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["userProfile"] }),
+  });
+}
+
+// =================== PETROL BUNK (LOCAL STATE) ===================
+export interface PetrolBunk {
+  id: bigint;
+  bunkName: string;
+  location: string;
+  contact: string;
+  creditLimit: number;
+}
+
+export function useGetAllPetrolBunks() {
+  return useQuery<PetrolBunk[]>({
+    queryKey: ["petrolBunks"],
+    queryFn: async () => loadFromStorage<PetrolBunk>("jt_petrol_bunks"),
+    staleTime: 0,
+  });
+}
+
+export function useCreatePetrolBunk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<PetrolBunk, "id">) => {
+      const items = loadFromStorage<PetrolBunk>("jt_petrol_bunks");
+      const newItem: PetrolBunk = { ...data, id: nextId(items) };
+      saveToStorage("jt_petrol_bunks", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["petrolBunks"] }),
+  });
+}
+
+export function useUpdatePetrolBunk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: PetrolBunk) => {
+      const items = loadFromStorage<PetrolBunk>("jt_petrol_bunks");
+      saveToStorage(
+        "jt_petrol_bunks",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["petrolBunks"] }),
+  });
+}
+
+export function useDeletePetrolBunk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<PetrolBunk>("jt_petrol_bunks");
+      saveToStorage(
+        "jt_petrol_bunks",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["petrolBunks"] }),
+  });
+}
+
+// =================== BILLING INVOICE (LOCAL STATE) ===================
+export interface BillingLineItem {
+  tripId: string; // e.g. "LT-00001"
+  vehicleNo: string;
+  consignerName: string;
+  unloadingQty: number;
+  billingRate: number;
+  amount: number;
+}
+
+export interface BillingInvoice {
+  id: bigint;
+  invoiceNumber: string;
+  // Multi-trip support
+  unloadingIds: bigint[]; // all selected unloading IDs
+  tripIds: bigint[]; // all linked trip IDs
+  // Backward compat: first entry (or 0n)
+  unloadingId: bigint;
+  tripId: bigint;
+  clientName: string;
+  vehicleNo: string; // "Multiple" if more than one vehicle
+  consignerName: string;
+  unloadingQty: number; // total across all trips
+  billingRate: number; // rate of first trip (for backward compat)
+  subtotal: number;
+  gstAmount: number;
+  totalAmount: number;
+  status: string; // Pending | Submitted | Received
+  invoiceDate: string;
+  lineItems: BillingLineItem[]; // per-trip breakdown
+}
+
+export function useGetAllBillingInvoices() {
+  return useQuery<BillingInvoice[]>({
+    queryKey: ["billingInvoices"],
+    queryFn: async () => {
+      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
+      // Normalise old records that lack multi-trip fields
+      return items.map((item) => ({
+        ...item,
+        unloadingIds:
+          item.unloadingIds && item.unloadingIds.length > 0
+            ? item.unloadingIds
+            : [item.unloadingId ?? 0n],
+        tripIds:
+          item.tripIds && item.tripIds.length > 0
+            ? item.tripIds
+            : [item.tripId ?? 0n],
+        lineItems: item.lineItems ?? [],
+      }));
+    },
+    staleTime: 0,
+  });
+}
+
+export function useCreateBillingInvoice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<BillingInvoice, "id">) => {
+      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
+      const newItem: BillingInvoice = { ...data, id: nextId(items) };
+      saveToStorage("jt_billing_invoices", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["billingInvoices"] }),
+  });
+}
+
+export function useUpdateBillingInvoice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: BillingInvoice) => {
+      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
+      saveToStorage(
+        "jt_billing_invoices",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["billingInvoices"] }),
+  });
+}
+
+export function useDeleteBillingInvoice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
+      saveToStorage(
+        "jt_billing_invoices",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["billingInvoices"] }),
+  });
+}
+
+// =================== TDS RECORD (LOCAL STATE) ===================
+export interface TDSRecord {
+  id: bigint;
+  ownerName: string;
+  ownerPAN: string;
+  vehicleNo: string;
+  tripId: bigint;
+  advanceAmount: number;
+  tdsAmount: number;
+  entryDate: string;
+  remarks: string;
+  status: string; // pending | paid
+}
+
+export function useGetAllTDSRecords() {
+  return useQuery<TDSRecord[]>({
+    queryKey: ["tdsRecords"],
+    queryFn: async () => loadFromStorage<TDSRecord>("jt_tds_entries"),
+    staleTime: 0,
+  });
+}
+
+export function useCreateTDSRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<TDSRecord, "id">) => {
+      const items = loadFromStorage<TDSRecord>("jt_tds_entries");
+      const newItem: TDSRecord = { ...data, id: nextId(items) };
+      saveToStorage("jt_tds_entries", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["tdsRecords"] }),
+  });
+}
+
+export function useUpdateTDSRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: TDSRecord) => {
+      const items = loadFromStorage<TDSRecord>("jt_tds_entries");
+      saveToStorage(
+        "jt_tds_entries",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["tdsRecords"] }),
+  });
+}
+
+export function useDeleteTDSRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<TDSRecord>("jt_tds_entries");
+      saveToStorage(
+        "jt_tds_entries",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["tdsRecords"] }),
+  });
+}
+
+// =================== ERP SETTINGS (LOCAL STATE) ===================
+export interface ERPSettings {
+  companyName: string;
+  companyAddress: string;
+  companyGST: string;
+  gpsDeduction: number;
+  challanRate: number;
+  shortageRate: number;
+  gstRate: number;
+}
+
+const DEFAULT_SETTINGS: ERPSettings = {
+  companyName: "Jeen Trade & Exports Pvt Ltd",
+  companyAddress: "",
+  companyGST: "",
+  gpsDeduction: 131,
+  challanRate: 200,
+  shortageRate: 5000,
+  gstRate: 18,
+};
+
+export function useGetSettings() {
+  return useQuery<ERPSettings>({
+    queryKey: ["erpSettings"],
+    queryFn: async () => {
+      try {
+        const raw = localStorage.getItem("jt_erp_settings");
+        if (!raw) return DEFAULT_SETTINGS;
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as ERPSettings;
+      } catch {
+        return DEFAULT_SETTINGS;
+      }
+    },
+    staleTime: 0,
+  });
+}
+
+export function useSaveSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: ERPSettings) => {
+      localStorage.setItem("jt_erp_settings", JSON.stringify(data));
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["erpSettings"] }),
   });
 }
