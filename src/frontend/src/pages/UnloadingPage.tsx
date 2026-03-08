@@ -33,6 +33,7 @@ import {
   useCreateUnloading,
   useDeleteUnloading,
   useGetAllConsigners,
+  useGetAllDeliveryOrders,
   useGetAllLoadingTrips,
   useGetAllUnloadings,
   useGetAllVehicles,
@@ -50,6 +51,7 @@ interface UnloadingFormData {
   tollCharges: string;
   bookingRate: string;
   billingRate: string;
+  shortageRate: string; // per ton, default 5000
 }
 
 const defaultForm: UnloadingFormData = {
@@ -62,6 +64,7 @@ const defaultForm: UnloadingFormData = {
   tollCharges: "0",
   bookingRate: "",
   billingRate: "",
+  shortageRate: "5000",
 };
 
 interface UnloadingPageProps {
@@ -77,6 +80,7 @@ export default function UnloadingPage({
   const tripsQuery = useGetAllLoadingTrips();
   const vehiclesQuery = useGetAllVehicles();
   const consignersQuery = useGetAllConsigners();
+  const dosQuery = useGetAllDeliveryOrders();
   const createUnloading = useCreateUnloading();
   const updateUnloading = useUpdateUnloading();
   const deleteUnloading = useDeleteUnloading();
@@ -89,27 +93,64 @@ export default function UnloadingPage({
   const unloadings = unloadingsQuery.data ?? [];
   const trips = tripsQuery.data ?? [];
   const vehicles = vehiclesQuery.data ?? [];
-  const consigners = consignersQuery.data ?? [];
+  const dos = dosQuery.data ?? [];
 
   const loadedTrips = trips.filter((t) => t.status === "loaded");
+
+  // Helper: get rates from DO or fall back to Consigner master
+  const getRatesForTrip = (trip: LoadingTrip) => {
+    const consignerList = consignersQuery.data ?? [];
+    const consigner = consignerList.find((c) => c.id === trip.consignerId);
+
+    // Try to get rates from the linked DO first
+    if (trip.doId && trip.doId !== 0n) {
+      const linkedDO = dos.find((d) => {
+        try {
+          return BigInt(d.id.toString()) === BigInt(trip.doId.toString());
+        } catch {
+          return false;
+        }
+      });
+      if (linkedDO) {
+        return {
+          bookingRate: (
+            linkedDO.nonAssociationRate ||
+            consigner?.nonAssociationRate ||
+            0
+          ).toString(),
+          billingRate: (
+            linkedDO.billingRate ||
+            consigner?.billingRate ||
+            0
+          ).toString(),
+          gpsDeduction: (linkedDO.gpsCharges || 131).toString(),
+          shortageRate: (linkedDO.shortageRate || 5000).toString(),
+        };
+      }
+    }
+    // Fall back to Consigner master
+    return {
+      bookingRate: consigner ? consigner.nonAssociationRate.toString() : "",
+      billingRate: consigner ? consigner.billingRate.toString() : "",
+      gpsDeduction: "131",
+      shortageRate: "5000",
+    };
+  };
 
   // Prefill from loading trips page
   useEffect(() => {
     if (!prefillTrip) return;
-    const consignerList = consignersQuery.data ?? [];
-    const consigner = consignerList.find(
-      (c) => c.id === prefillTrip.consignerId,
-    );
+    const rates = getRatesForTrip(prefillTrip);
     setEditingItem(null);
     setForm({
       ...defaultForm,
       loadingTripId: prefillTrip.id.toString(),
-      bookingRate: consigner ? consigner.nonAssociationRate.toString() : "",
-      billingRate: consigner ? consigner.billingRate.toString() : "",
+      ...rates,
     });
     setDialogOpen(true);
     onPrefillConsumed?.();
-  }, [prefillTrip, consignersQuery.data, onPrefillConsumed]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: getRatesForTrip is a stable closure
+  }, [prefillTrip, onPrefillConsumed, getRatesForTrip]);
 
   const getTrip = (id: bigint) => trips.find((t) => t.id === id);
   const getVehicleNum = (id: bigint) =>
@@ -131,7 +172,9 @@ export default function UnloadingPage({
     const hsdAmount = trip ? Number(trip.hsdAmount) || 0 : 0;
 
     const shortageQty = Math.max(0, loadingQty - unloadingQty);
-    const shortageAmount = shortageQty > 0.05 ? shortageQty * 5000 : 0;
+    const shortageRateVal = Number(form.shortageRate) || 5000;
+    const shortageAmount =
+      shortageQty > 0.05 ? shortageQty * shortageRateVal : 0;
     const cashTds = advanceCash * 0.02;
     const bookingRate = Number(form.bookingRate) || 0;
     const billingRate = Number(form.billingRate) || 0;
@@ -184,6 +227,11 @@ export default function UnloadingPage({
 
   const openEditDialog = (item: Unloading) => {
     setEditingItem(item);
+    // Compute shortageRate back from stored data if possible
+    const shortageRateFromData =
+      item.shortageQty > 0 && item.shortageAmount > 0
+        ? Math.round(item.shortageAmount / item.shortageQty).toString()
+        : "5000";
     setForm({
       loadingTripId: item.loadingTripId.toString(),
       unloadingDate: item.unloadingDate,
@@ -194,24 +242,22 @@ export default function UnloadingPage({
       tollCharges: item.tollCharges.toString(),
       bookingRate: item.bookingRate.toString(),
       billingRate: item.billingRate.toString(),
+      shortageRate: shortageRateFromData,
     });
     setDialogOpen(true);
   };
 
-  // Auto-fill rates when consigner changes via trip selection
+  // Auto-fill rates from DO (preferred) or Consigner master when trip is selected
   const handleTripSelect = (tripId: string) => {
-    const trip = trips.find((t) => t.id === BigInt(tripId));
+    const trip = trips.find(
+      (t) => t.id.toString() === tripId || Number(t.id) === Number(tripId),
+    );
     if (trip) {
-      const consigner = consigners.find((c) => c.id === trip.consignerId);
+      const rates = getRatesForTrip(trip);
       setForm((p) => ({
         ...p,
         loadingTripId: tripId,
-        bookingRate: consigner
-          ? consigner.nonAssociationRate.toString()
-          : p.bookingRate,
-        billingRate: consigner
-          ? consigner.billingRate.toString()
-          : p.billingRate,
+        ...rates,
       }));
     } else {
       setForm((p) => ({ ...p, loadingTripId: tripId }));
@@ -224,6 +270,33 @@ export default function UnloadingPage({
       toast.error("Please select a loading trip");
       return;
     }
+
+    // Duplicate unloading check — one unloading record per trip (challan) only
+    if (!editingItem) {
+      const tripIdBig = BigInt(form.loadingTripId);
+      const alreadyUnloaded = unloadings.find((u) => {
+        try {
+          return BigInt(u.loadingTripId.toString()) === tripIdBig;
+        } catch {
+          return false;
+        }
+      });
+      if (alreadyUnloaded) {
+        const trip = trips.find((t) => {
+          try {
+            return BigInt(t.id.toString()) === tripIdBig;
+          } catch {
+            return false;
+          }
+        });
+        toast.error(
+          `Unloading already recorded for Challan ${trip?.challanNo ?? form.loadingTripId}. Double entry not allowed.`,
+          { duration: 6000 },
+        );
+        return;
+      }
+    }
+
     const cv = computedValues;
     const data: Omit<Unloading, "id"> = {
       loadingTripId: BigInt(form.loadingTripId),
@@ -340,7 +413,7 @@ export default function UnloadingPage({
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
                   <TableHead className="text-xs font-semibold">
-                    Trip ID
+                    Challan No
                   </TableHead>
                   <TableHead className="text-xs font-semibold">Date</TableHead>
                   <TableHead className="text-xs font-semibold">
@@ -388,7 +461,7 @@ export default function UnloadingPage({
                       data-ocid={`unloading.item.${index + 1}`}
                     >
                       <TableCell className="text-xs font-mono font-semibold">
-                        {trip?.tripId ?? item.loadingTripId.toString()}
+                        {trip?.challanNo ?? item.loadingTripId.toString()}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {formatDate(item.unloadingDate)}
@@ -494,24 +567,34 @@ export default function UnloadingPage({
                     <SelectValue placeholder="Select loaded trip" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* Show loaded trips for new, or include the editing trip */}
-                    {(editingItem
-                      ? trips.filter(
-                          (t) =>
-                            t.id === BigInt(form.loadingTripId) ||
-                            t.status === "loaded",
-                        )
-                      : loadedTrips
-                    ).map((t) => (
-                      <SelectItem
-                        key={t.id.toString()}
-                        value={t.id.toString()}
-                        className="text-xs"
-                      >
-                        {t.tripId} — {getVehicleNum(t.vehicleId)} (
-                        {t.loadingQty.toFixed(2)} MT)
-                      </SelectItem>
-                    ))}
+                    {/* When editing: show all trips so the linked trip always appears.
+                        When creating: only show loaded trips; disable those already unloaded */}
+                    {(editingItem ? trips : loadedTrips).map((t) => {
+                      const alreadyUnloaded =
+                        !editingItem &&
+                        unloadings.some((u) => {
+                          try {
+                            return (
+                              BigInt(u.loadingTripId.toString()) ===
+                              BigInt(t.id.toString())
+                            );
+                          } catch {
+                            return false;
+                          }
+                        });
+                      return (
+                        <SelectItem
+                          key={t.id.toString()}
+                          value={t.id.toString()}
+                          className="text-xs"
+                          disabled={alreadyUnloaded}
+                        >
+                          {t.challanNo} — {getVehicleNum(t.vehicleId)} (
+                          {t.loadingQty.toFixed(2)} MT)
+                          {alreadyUnloaded ? " ✓ Already Unloaded" : ""}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -564,9 +647,22 @@ export default function UnloadingPage({
 
             {/* Rates */}
             <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-              <p className="text-xs font-semibold text-foreground">
-                Rates (₹/MT)
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-foreground">
+                  Rates (₹/MT)
+                </p>
+                {selectedTrip && selectedTrip.doId !== 0n && (
+                  <span
+                    className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                    style={{
+                      background: "oklch(0.55 0.16 150 / 0.12)",
+                      color: "oklch(0.35 0.16 150)",
+                    }}
+                  >
+                    Auto-filled from DO
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="ul-booking" className="text-xs">
@@ -612,9 +708,25 @@ export default function UnloadingPage({
             {/* Deductions */}
             <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
               <p className="text-xs font-semibold text-foreground">
-                Deductions
+                Deductions & Rates
               </p>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="ul-shortage-rate" className="text-xs">
+                    Shortage Rate (₹/MT)
+                  </Label>
+                  <Input
+                    id="ul-shortage-rate"
+                    type="number"
+                    min="0"
+                    value={form.shortageRate}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, shortageRate: e.target.value }))
+                    }
+                    className="text-xs"
+                    data-ocid="unloading.shortage_rate.input"
+                  />
+                </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="ul-gps" className="text-xs">
                     GPS (₹/trip)

@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import {
   type LoadingTrip,
   useCreateLoadingTrip,
+  useCreatePettyCashLedger,
   useDeleteLoadingTrip,
   useGetAllConsignees,
   useGetAllConsigners,
@@ -97,6 +98,7 @@ export default function LoadingTripsPage({
   const createTrip = useCreateLoadingTrip();
   const updateTrip = useUpdateLoadingTrip();
   const deleteTrip = useDeleteLoadingTrip();
+  const createPettyCash = useCreatePettyCashLedger();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LoadingTrip | null>(null);
@@ -122,6 +124,26 @@ export default function LoadingTripsPage({
     setEditingItem(null);
     setForm(defaultForm);
     setDialogOpen(true);
+  };
+
+  // When a DO is selected, auto-fill consigner and consignee from the DO
+  const handleDOSelect = (v: string) => {
+    if (!v || v === "0") {
+      setForm((p) => ({ ...p, doId: v }));
+      return;
+    }
+    const selectedDO = dos.find((d) => d.id.toString() === v);
+    setForm((p) => ({
+      ...p,
+      doId: v,
+      consignerId: selectedDO
+        ? selectedDO.consignerId.toString()
+        : p.consignerId,
+      consigneeId:
+        selectedDO?.consigneeId && selectedDO.consigneeId !== 0n
+          ? selectedDO.consigneeId.toString()
+          : p.consigneeId,
+    }));
   };
 
   const openEditDialog = (item: LoadingTrip) => {
@@ -151,6 +173,39 @@ export default function LoadingTripsPage({
       toast.error("Please fill all required fields");
       return;
     }
+
+    // Duplicate Challan No check
+    const challanTrimmed = form.challanNo.trim().toUpperCase();
+    const duplicateChallan = trips.find(
+      (t) =>
+        t.challanNo.trim().toUpperCase() === challanTrimmed &&
+        t.id !== editingItem?.id,
+    );
+    if (duplicateChallan) {
+      toast.error(
+        `Challan No "${form.challanNo}" already exists. Duplicate entry not allowed.`,
+        { duration: 5000 },
+      );
+      return;
+    }
+
+    // Duplicate Pass Number (TP Number) check — only if pass number is provided
+    if (form.passNumber.trim()) {
+      const passTrimmed = form.passNumber.trim().toUpperCase();
+      const duplicatePass = trips.find(
+        (t) =>
+          t.passNumber.trim().toUpperCase() === passTrimmed &&
+          t.id !== editingItem?.id,
+      );
+      if (duplicatePass) {
+        toast.error(
+          `TP/Pass No "${form.passNumber}" already used in Challan ${duplicatePass.challanNo}. Duplicate entry not allowed.`,
+          { duration: 5000 },
+        );
+        return;
+      }
+    }
+
     const data: Omit<LoadingTrip, "id" | "tripId"> = {
       loadingDate: form.loadingDate,
       challanNo: form.challanNo,
@@ -167,16 +222,46 @@ export default function LoadingTripsPage({
       petrolBunkName: form.petrolBunkName,
       status: form.status,
     };
+    const vehicleNum =
+      vehicles.find((v) => v.id.toString() === form.vehicleId)?.vehicleNumber ??
+      form.vehicleId;
+
     try {
       if (editingItem) {
+        const prevCash = editingItem.advanceCash ?? 0;
+        const newCash = Number(form.advanceCash) || 0;
         await updateTrip.mutateAsync({
           id: editingItem.id,
           tripId: editingItem.tripId,
           ...data,
         });
+        // If cash advance increased, record the difference as Cash Outward
+        const cashDiff = newCash - prevCash;
+        if (cashDiff > 0 && form.loadingDate) {
+          await createPettyCash.mutateAsync({
+            date: form.loadingDate,
+            transactionType: "debit",
+            category: "Vehicle Advance (Cash)",
+            narration: `Cash Advance to vehicle ${vehicleNum} | Challan: ${form.challanNo}`,
+            amount: cashDiff,
+            reference: form.challanNo,
+          });
+        }
         toast.success("Loading trip updated");
       } else {
         await createTrip.mutateAsync(data);
+        // Auto-record cash advance as Cash Outward in Petty Cash
+        const cashAmt = Number(form.advanceCash) || 0;
+        if (cashAmt > 0 && form.loadingDate) {
+          await createPettyCash.mutateAsync({
+            date: form.loadingDate,
+            transactionType: "debit",
+            category: "Vehicle Advance (Cash)",
+            narration: `Cash Advance to vehicle ${vehicleNum} | Challan: ${form.challanNo}`,
+            amount: cashAmt,
+            reference: form.challanNo,
+          });
+        }
         toast.success("Loading trip recorded");
       }
       setDialogOpen(false);
@@ -262,12 +347,9 @@ export default function LoadingTripsPage({
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
                   <TableHead className="text-xs font-semibold">
-                    Trip ID
+                    Challan No
                   </TableHead>
                   <TableHead className="text-xs font-semibold">Date</TableHead>
-                  <TableHead className="text-xs font-semibold">
-                    Challan
-                  </TableHead>
                   <TableHead className="text-xs font-semibold">
                     Vehicle
                   </TableHead>
@@ -303,13 +385,10 @@ export default function LoadingTripsPage({
                       data-ocid={`loading_trips.item.${index + 1}`}
                     >
                       <TableCell className="text-xs font-mono font-semibold">
-                        {item.tripId}
+                        {item.challanNo}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {formatDate(item.loadingDate)}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {item.challanNo}
                       </TableCell>
                       <TableCell className="text-xs font-mono font-medium">
                         {getVehicleNum(item.vehicleId)}
@@ -398,7 +477,7 @@ export default function LoadingTripsPage({
           <DialogHeader>
             <DialogTitle className="font-display">
               {editingItem
-                ? `Edit Trip ${editingItem.tripId}`
+                ? `Edit Trip — Challan ${editingItem.challanNo}`
                 : "Record Loading Trip"}
             </DialogTitle>
           </DialogHeader>
@@ -481,10 +560,7 @@ export default function LoadingTripsPage({
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Delivery Order (DO)</Label>
-                <Select
-                  value={form.doId}
-                  onValueChange={(v) => setForm((p) => ({ ...p, doId: v }))}
-                >
+                <Select value={form.doId} onValueChange={handleDOSelect}>
                   <SelectTrigger
                     className="text-xs"
                     data-ocid="loading_trips.do.select"
@@ -501,13 +577,31 @@ export default function LoadingTripsPage({
                         const csgName =
                           consigners.find((c) => c.id === d.consignerId)
                             ?.name ?? "?";
+                        const dispatched = trips
+                          .filter((t) => {
+                            try {
+                              return (
+                                BigInt(t.doId.toString()) ===
+                                BigInt(d.id.toString())
+                              );
+                            } catch {
+                              return false;
+                            }
+                          })
+                          .reduce((s, t) => s + (Number(t.loadingQty) || 0), 0);
+                        const remaining = d.doQty - dispatched;
+                        const overDispatch =
+                          remaining <= 0 && !d.allowOverDispatch;
                         return (
                           <SelectItem
                             key={d.id.toString()}
                             value={d.id.toString()}
                             className="text-xs"
+                            disabled={overDispatch}
                           >
-                            {d.doNumber} — {csgName}
+                            {d.doNumber} — {csgName} (Rem:{" "}
+                            {remaining.toFixed(1)} MT
+                            {overDispatch ? " — FULL" : ""})
                           </SelectItem>
                         );
                       })}
@@ -758,8 +852,8 @@ export default function LoadingTripsPage({
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Delete trip <strong>{deleteConfirm?.tripId}</strong>? This cannot be
-            undone.
+            Delete trip with Challan <strong>{deleteConfirm?.challanNo}</strong>
+            ? This cannot be undone.
           </p>
           <DialogFooter>
             <Button

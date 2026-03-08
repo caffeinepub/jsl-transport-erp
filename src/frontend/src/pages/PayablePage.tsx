@@ -32,8 +32,8 @@ import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   CheckCircle,
-  Clock,
   CreditCard,
+  Info,
   Loader2,
   Pencil,
   TrendingDown,
@@ -197,17 +197,27 @@ export default function PayablePage() {
     e.preventDefault();
     if (!paymentDialog) return;
     const paid = Number(paymentForm.amountPaid || 0);
+    const previouslyPaid = paymentDialog.amountPaid;
+    const totalPaidNow = previouslyPaid + paid;
+    const isFullPayment = totalPaidNow >= paymentDialog.totalPayable;
     try {
       await updatePayable.mutateAsync({
         ...paymentDialog,
-        amountPaid: paid,
+        amountPaid: totalPaidNow,
         paymentDate: paymentForm.paymentDate,
         paymentMode: paymentForm.paymentMode,
         referenceNumber: paymentForm.referenceNumber,
         remarks: paymentForm.remarks,
         status: paymentDialog.status, // let mutation recalculate
       });
-      toast.success("Payment recorded successfully");
+      if (isFullPayment) {
+        toast.success("Full payment recorded. Trip marked as Paid.");
+      } else {
+        const remaining = paymentDialog.totalPayable - totalPaidNow;
+        toast.success(
+          `Partial payment of ₹${paid.toLocaleString("en-IN")} recorded. Remaining balance: ₹${remaining.toLocaleString("en-IN")}`,
+        );
+      }
       setPaymentDialog(null);
     } catch {
       toast.error("Failed to process payment.");
@@ -634,8 +644,7 @@ export default function PayablePage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        {(record.status === "payment_requested" ||
-                          record.status === "partial") && (
+                        {record.status !== "paid" && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -643,7 +652,7 @@ export default function PayablePage() {
                             className="h-7 gap-1 px-2 text-[10px] whitespace-nowrap"
                             data-ocid={`payable.pay_button.${index + 1}`}
                           >
-                            <CheckCircle className="h-3 w-3" />
+                            <CreditCard className="h-3 w-3" />
                             Pay
                           </Button>
                         )}
@@ -663,12 +672,6 @@ export default function PayablePage() {
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </div>
-                        )}
-                        {record.status === "pending" && (
-                          <span className="flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            Select to request
-                          </span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -692,270 +695,349 @@ export default function PayablePage() {
           <DialogHeader>
             <DialogTitle className="font-display">Process Payment</DialogTitle>
           </DialogHeader>
-          {paymentDialog && (
-            <form onSubmit={handleProcessPayment} className="space-y-4">
-              {/* Trip summary */}
-              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
-                <p className="text-xs font-semibold text-foreground">
-                  Trip Details
-                </p>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <p className="text-muted-foreground">Trip ID</p>
-                    <p className="font-mono font-medium">
-                      {paymentDialog.tripReference}
+          {paymentDialog &&
+            (() => {
+              const enteredAmt = Number(paymentForm.amountPaid || 0);
+              const previouslyPaid = paymentDialog.amountPaid;
+              const balanceDue = paymentDialog.balance;
+              const totalPaidAfter = previouslyPaid + enteredAmt;
+              const remainingAfter = Math.max(
+                0,
+                paymentDialog.totalPayable - totalPaidAfter,
+              );
+              const isFullPayment = enteredAmt > 0 && remainingAfter === 0;
+              const isPartialPayment = enteredAmt > 0 && remainingAfter > 0;
+              return (
+                <form onSubmit={handleProcessPayment} className="space-y-4">
+                  {/* Trip summary */}
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-foreground">
+                      Trip Details
                     </p>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <p className="text-muted-foreground">Trip ID</p>
+                        <p className="font-mono font-medium">
+                          {paymentDialog.tripReference}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Vehicle</p>
+                        <p className="font-mono font-medium">
+                          {paymentDialog.vehicleNumber}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Owner</p>
+                        <p className="font-medium">
+                          {paymentDialog.ownerName || "-"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Loading Date</p>
+                        <p className="font-medium">
+                          {paymentDialog.loadingDate
+                            ? formatDate(paymentDialog.loadingDate)
+                            : "-"}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-muted-foreground">Vehicle</p>
-                    <p className="font-mono font-medium">
-                      {paymentDialog.vehicleNumber}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Owner</p>
-                    <p className="font-medium">
-                      {paymentDialog.ownerName || "-"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Loading Date</p>
-                    <p className="font-medium">
-                      {paymentDialog.loadingDate
-                        ? formatDate(paymentDialog.loadingDate)
-                        : "-"}
-                    </p>
-                  </div>
-                </div>
-              </div>
 
-              {/* Deduction breakdown */}
-              <div className="rounded-lg border border-border bg-muted/10 p-3 space-y-1.5">
-                <p className="text-xs font-semibold text-foreground mb-2">
-                  Payment Calculation
-                </p>
-                {[
-                  {
-                    label: "Booking Amount",
-                    value: paymentDialog.bookingAmount,
-                    color: "text-foreground",
-                    prefix: "",
-                  },
-                  {
-                    label: "Shortage Deduction",
-                    value: paymentDialog.shortageDeduction,
-                    color: "text-destructive",
-                    prefix: "−",
-                  },
-                  {
-                    label: "GPS Deduction",
-                    value: paymentDialog.gpsDeduction,
-                    color: "text-muted-foreground",
-                    prefix: "−",
-                  },
-                  {
-                    label: "Challan Deduction",
-                    value: paymentDialog.challanDeduction,
-                    color: "text-muted-foreground",
-                    prefix: "−",
-                  },
-                  {
-                    label: "Toll Charges",
-                    value: paymentDialog.tollCharges,
-                    color: "text-green-700",
-                    prefix: "+",
-                  },
-                  {
-                    label: "Advance Deduction",
-                    value: paymentDialog.advanceDeduction,
-                    color: "text-muted-foreground",
-                    prefix: "−",
-                  },
-                  {
-                    label: "HSD Deduction",
-                    value: paymentDialog.hsdDeduction,
-                    color: "text-muted-foreground",
-                    prefix: "−",
-                  },
-                  {
-                    label: "Cash TDS",
-                    value: paymentDialog.cashTdsDeduction,
-                    color: "text-muted-foreground",
-                    prefix: "−",
-                  },
-                  {
-                    label: "Penalty",
-                    value: paymentDialog.penaltyDeduction,
-                    color: "text-destructive",
-                    prefix: "−",
-                  },
-                ]
-                  .filter((row) => row.value)
-                  .map((row) => (
-                    <div
-                      key={row.label}
-                      className="flex items-center justify-between text-xs"
-                    >
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className={row.color}>
-                        {row.prefix}
-                        {formatCurrency(row.value ?? 0)}
+                  {/* Deduction breakdown */}
+                  <div className="rounded-lg border border-border bg-muted/10 p-3 space-y-1.5">
+                    <p className="text-xs font-semibold text-foreground mb-2">
+                      Payment Calculation
+                    </p>
+                    {[
+                      {
+                        label: "Booking Amount",
+                        value: paymentDialog.bookingAmount,
+                        color: "text-foreground",
+                        prefix: "",
+                      },
+                      {
+                        label: "Shortage Deduction",
+                        value: paymentDialog.shortageDeduction,
+                        color: "text-destructive",
+                        prefix: "−",
+                      },
+                      {
+                        label: "GPS Deduction",
+                        value: paymentDialog.gpsDeduction,
+                        color: "text-muted-foreground",
+                        prefix: "−",
+                      },
+                      {
+                        label: "Challan Deduction",
+                        value: paymentDialog.challanDeduction,
+                        color: "text-muted-foreground",
+                        prefix: "−",
+                      },
+                      {
+                        label: "Toll Charges",
+                        value: paymentDialog.tollCharges,
+                        color: "text-green-700",
+                        prefix: "+",
+                      },
+                      {
+                        label: "Advance Deduction",
+                        value: paymentDialog.advanceDeduction,
+                        color: "text-muted-foreground",
+                        prefix: "−",
+                      },
+                      {
+                        label: "HSD Deduction",
+                        value: paymentDialog.hsdDeduction,
+                        color: "text-muted-foreground",
+                        prefix: "−",
+                      },
+                      {
+                        label: "Cash TDS",
+                        value: paymentDialog.cashTdsDeduction,
+                        color: "text-muted-foreground",
+                        prefix: "−",
+                      },
+                      {
+                        label: "Penalty",
+                        value: paymentDialog.penaltyDeduction,
+                        color: "text-destructive",
+                        prefix: "−",
+                      },
+                    ]
+                      .filter((row) => row.value)
+                      .map((row) => (
+                        <div
+                          key={row.label}
+                          className="flex items-center justify-between text-xs"
+                        >
+                          <span className="text-muted-foreground">
+                            {row.label}
+                          </span>
+                          <span className={row.color}>
+                            {row.prefix}
+                            {formatCurrency(row.value ?? 0)}
+                          </span>
+                        </div>
+                      ))}
+                    <div className="flex items-center justify-between text-xs font-bold border-t border-border pt-1.5 mt-1.5">
+                      <span className="text-foreground">Net Payable</span>
+                      <span className="text-foreground">
+                        {formatCurrency(paymentDialog.totalPayable)}
                       </span>
                     </div>
-                  ))}
-                <div className="flex items-center justify-between text-xs font-bold border-t border-border pt-1.5 mt-1.5">
-                  <span className="text-foreground">Net Payable</span>
-                  <span className="text-foreground">
-                    {formatCurrency(paymentDialog.totalPayable)}
-                  </span>
-                </div>
-                {paymentDialog.amountPaid > 0 && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Already Paid</span>
-                    <span style={{ color: "oklch(0.4 0.16 150)" }}>
-                      {formatCurrency(paymentDialog.amountPaid)}
-                    </span>
+                    {paymentDialog.amountPaid > 0 && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">
+                          Already Paid
+                        </span>
+                        <span style={{ color: "oklch(0.4 0.16 150)" }}>
+                          {formatCurrency(paymentDialog.amountPaid)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-foreground">Balance Due</span>
+                      <span style={{ color: "oklch(0.45 0.2 27)" }}>
+                        {formatCurrency(paymentDialog.balance)}
+                      </span>
+                    </div>
                   </div>
-                )}
-                <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="text-foreground">Balance Due</span>
-                  <span style={{ color: "oklch(0.45 0.2 27)" }}>
-                    {formatCurrency(paymentDialog.balance)}
-                  </span>
-                </div>
-              </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="payAmt" className="text-xs">
-                  Amount to Pay (₹) *
-                </Label>
-                <Input
-                  id="payAmt"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder={paymentDialog.balance.toString()}
-                  value={paymentForm.amountPaid}
-                  onChange={(e) =>
-                    setPaymentForm((p) => ({
-                      ...p,
-                      amountPaid: e.target.value,
-                    }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="payable.payment.amount_input"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="payDate" className="text-xs">
-                    Payment Date *
-                  </Label>
-                  <Input
-                    id="payDate"
-                    type="date"
-                    value={paymentForm.paymentDate}
-                    onChange={(e) =>
-                      setPaymentForm((p) => ({
-                        ...p,
-                        paymentDate: e.target.value,
-                      }))
-                    }
-                    required
-                    className="text-xs"
-                    data-ocid="payable.payment.date_input"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Payment Mode *</Label>
-                  <Select
-                    value={paymentForm.paymentMode}
-                    onValueChange={(v) =>
-                      setPaymentForm((p) => ({ ...p, paymentMode: v }))
-                    }
-                  >
-                    <SelectTrigger
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="payAmt" className="text-xs">
+                        Amount to Pay Now (₹) *
+                      </Label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPaymentForm((p) => ({
+                            ...p,
+                            amountPaid: balanceDue.toString(),
+                          }))
+                        }
+                        className="text-[10px] px-2 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/5 transition-colors"
+                      >
+                        Pay Full (₹{balanceDue.toLocaleString("en-IN")})
+                      </button>
+                    </div>
+                    <Input
+                      id="payAmt"
+                      type="number"
+                      min="0"
+                      max={balanceDue}
+                      step="0.01"
+                      placeholder={balanceDue.toString()}
+                      value={paymentForm.amountPaid}
+                      onChange={(e) =>
+                        setPaymentForm((p) => ({
+                          ...p,
+                          amountPaid: e.target.value,
+                        }))
+                      }
+                      required
                       className="text-xs"
-                      data-ocid="payable.payment.mode_select"
+                      data-ocid="payable.payment.amount_input"
+                    />
+                    {/* Partial / Full payment indicator */}
+                    {enteredAmt > 0 && (
+                      <div
+                        className="flex items-center gap-2 rounded-md px-3 py-2 text-xs border"
+                        style={
+                          isFullPayment
+                            ? {
+                                background: "oklch(0.97 0.04 150)",
+                                borderColor: "oklch(0.4 0.16 150 / 0.3)",
+                                color: "oklch(0.35 0.14 150)",
+                              }
+                            : {
+                                background: "oklch(0.97 0.06 60)",
+                                borderColor: "oklch(0.72 0.18 60 / 0.3)",
+                                color: "oklch(0.45 0.14 60)",
+                              }
+                        }
+                      >
+                        {isFullPayment ? (
+                          <>
+                            <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                            <span className="font-semibold">Full Payment</span>
+                            <span className="ml-auto">
+                              Trip will be marked Paid
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Info className="h-3.5 w-3.5 shrink-0" />
+                            <span className="font-semibold">
+                              Partial Payment
+                            </span>
+                            <span className="ml-auto">
+                              Remaining:{" "}
+                              <span className="font-bold">
+                                ₹{remainingAfter.toLocaleString("en-IN")}
+                              </span>
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="payDate" className="text-xs">
+                        Payment Date *
+                      </Label>
+                      <Input
+                        id="payDate"
+                        type="date"
+                        value={paymentForm.paymentDate}
+                        onChange={(e) =>
+                          setPaymentForm((p) => ({
+                            ...p,
+                            paymentDate: e.target.value,
+                          }))
+                        }
+                        required
+                        className="text-xs"
+                        data-ocid="payable.payment.date_input"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Payment Mode *</Label>
+                      <Select
+                        value={paymentForm.paymentMode}
+                        onValueChange={(v) =>
+                          setPaymentForm((p) => ({ ...p, paymentMode: v }))
+                        }
+                      >
+                        <SelectTrigger
+                          className="text-xs"
+                          data-ocid="payable.payment.mode_select"
+                        >
+                          <SelectValue placeholder="Select mode" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAYMENT_MODES.map((m) => (
+                            <SelectItem key={m} value={m} className="text-xs">
+                              {m}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="col-span-2 space-y-1.5">
+                      <Label htmlFor="payRef" className="text-xs">
+                        Reference / UTR / Cheque No
+                      </Label>
+                      <Input
+                        id="payRef"
+                        placeholder="Reference number"
+                        value={paymentForm.referenceNumber}
+                        onChange={(e) =>
+                          setPaymentForm((p) => ({
+                            ...p,
+                            referenceNumber: e.target.value,
+                          }))
+                        }
+                        className="text-xs"
+                        data-ocid="payable.payment.reference_input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="payRemarks" className="text-xs">
+                      Remarks
+                    </Label>
+                    <Textarea
+                      id="payRemarks"
+                      placeholder="Additional notes..."
+                      value={paymentForm.remarks}
+                      onChange={(e) =>
+                        setPaymentForm((p) => ({
+                          ...p,
+                          remarks: e.target.value,
+                        }))
+                      }
+                      className="text-xs resize-none"
+                      rows={2}
+                      data-ocid="payable.payment.remarks_textarea"
+                    />
+                  </div>
+
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setPaymentDialog(null)}
+                      data-ocid="payable.payment.cancel_button"
+                      className="text-xs"
                     >
-                      <SelectValue placeholder="Select mode" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAYMENT_MODES.map((m) => (
-                        <SelectItem key={m} value={m} className="text-xs">
-                          {m}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="col-span-2 space-y-1.5">
-                  <Label htmlFor="payRef" className="text-xs">
-                    Reference / UTR / Cheque No
-                  </Label>
-                  <Input
-                    id="payRef"
-                    placeholder="Reference number"
-                    value={paymentForm.referenceNumber}
-                    onChange={(e) =>
-                      setPaymentForm((p) => ({
-                        ...p,
-                        referenceNumber: e.target.value,
-                      }))
-                    }
-                    className="text-xs"
-                    data-ocid="payable.payment.reference_input"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="payRemarks" className="text-xs">
-                  Remarks
-                </Label>
-                <Textarea
-                  id="payRemarks"
-                  placeholder="Additional notes..."
-                  value={paymentForm.remarks}
-                  onChange={(e) =>
-                    setPaymentForm((p) => ({ ...p, remarks: e.target.value }))
-                  }
-                  className="text-xs resize-none"
-                  rows={2}
-                  data-ocid="payable.payment.remarks_textarea"
-                />
-              </div>
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setPaymentDialog(null)}
-                  data-ocid="payable.payment.cancel_button"
-                  className="text-xs"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={isUpdating || !paymentForm.paymentMode}
-                  data-ocid="payable.payment.confirm_button"
-                  className="text-xs"
-                >
-                  {isUpdating ? (
-                    <>
-                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    "Confirm Payment"
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={isUpdating || !paymentForm.paymentMode}
+                      data-ocid="payable.payment.confirm_button"
+                      className="text-xs"
+                    >
+                      {isUpdating ? (
+                        <>
+                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                          Processing...
+                        </>
+                      ) : isPartialPayment ? (
+                        "Confirm Partial Payment"
+                      ) : (
+                        "Confirm Full Payment"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              );
+            })()}
         </DialogContent>
       </Dialog>
     </div>

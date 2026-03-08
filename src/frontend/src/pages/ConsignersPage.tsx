@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -40,20 +39,16 @@ interface ConsignerFormData {
   name: string;
   material: string;
   location: string;
-  associationRate: string;
-  nonAssociationRate: string;
-  vendorRate: string;
-  billingRate: string;
+  contactPerson: string;
+  contactPhone: string;
 }
 
 const defaultForm: ConsignerFormData = {
   name: "",
   material: "Coal",
   location: "",
-  associationRate: "",
-  nonAssociationRate: "",
-  vendorRate: "",
-  billingRate: "",
+  contactPerson: "",
+  contactPhone: "",
 };
 
 const MATERIALS = ["Coal", "Iron Ore", "Fly Ash", "Other"];
@@ -83,10 +78,8 @@ export default function ConsignersPage() {
       name: item.name,
       material: item.material,
       location: item.location,
-      associationRate: Number(item.associationRate).toString(),
-      nonAssociationRate: Number(item.nonAssociationRate).toString(),
-      vendorRate: Number(item.vendorRate).toString(),
-      billingRate: Number(item.billingRate).toString(),
+      contactPerson: (item as any).contactPerson ?? "",
+      contactPhone: (item as any).contactPhone ?? "",
     });
     setDialogOpen(true);
   };
@@ -97,10 +90,10 @@ export default function ConsignersPage() {
       name: form.name,
       material: form.material,
       location: form.location,
-      associationRate: Number(form.associationRate),
-      nonAssociationRate: Number(form.nonAssociationRate),
-      vendorRate: Number(form.vendorRate),
-      billingRate: Number(form.billingRate),
+      associationRate: 0,
+      nonAssociationRate: 0,
+      vendorRate: 0,
+      billingRate: 0,
     };
     try {
       if (editingItem) {
@@ -202,24 +195,17 @@ export default function ConsignersPage() {
             <Table data-ocid="consigners.table">
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="text-xs font-semibold">Name</TableHead>
+                  <TableHead className="text-xs font-semibold">
+                    OCP Name
+                  </TableHead>
                   <TableHead className="text-xs font-semibold">
                     Material
                   </TableHead>
                   <TableHead className="text-xs font-semibold">
                     Location
                   </TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Assoc. Rate
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Non-Assoc. Rate
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Vendor Rate
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Billing Rate
+                  <TableHead className="text-xs font-semibold">
+                    Contact Person
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     Actions
@@ -244,28 +230,10 @@ export default function ConsignersPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {item.location}
+                      {item.location || "—"}
                     </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      ₹{Number(item.associationRate).toLocaleString("en-IN")}/MT
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      ₹{Number(item.nonAssociationRate).toLocaleString("en-IN")}
-                      /MT
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      ₹{Number(item.vendorRate).toLocaleString("en-IN")}/MT
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      <span
-                        className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold"
-                        style={{
-                          background: "oklch(0.72 0.18 145 / 0.12)",
-                          color: "oklch(0.45 0.18 145)",
-                        }}
-                      >
-                        ₹{Number(item.billingRate).toLocaleString("en-IN")}/MT
-                      </span>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {(item as any).contactPerson || "—"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -358,119 +326,39 @@ export default function ConsignersPage() {
                   className="text-xs"
                 />
               </div>
-            </div>
-
-            <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-              <p className="text-xs font-semibold text-foreground">
-                Booking Rates (₹ per MT)
-              </p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="csg-assoc"
-                    className="text-xs text-muted-foreground"
-                  >
-                    Association
-                  </Label>
-                  <Input
-                    id="csg-assoc"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="1220"
-                    value={form.associationRate}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        associationRate: e.target.value,
-                      }))
-                    }
-                    required
-                    className="text-xs"
-                    data-ocid="consigners.association_rate.input"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="csg-nonassoc"
-                    className="text-xs text-muted-foreground"
-                  >
-                    Non-Association
-                  </Label>
-                  <Input
-                    id="csg-nonassoc"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="1200"
-                    value={form.nonAssociationRate}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        nonAssociationRate: e.target.value,
-                      }))
-                    }
-                    required
-                    className="text-xs"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="csg-vendor"
-                    className="text-xs text-muted-foreground"
-                  >
-                    Vendor
-                  </Label>
-                  <Input
-                    id="csg-vendor"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="1210"
-                    value={form.vendorRate}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, vendorRate: e.target.value }))
-                    }
-                    required
-                    className="text-xs"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="csg-contact" className="text-xs">
+                  Contact Person
+                </Label>
+                <Input
+                  id="csg-contact"
+                  placeholder="Name"
+                  value={form.contactPerson}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, contactPerson: e.target.value }))
+                  }
+                  className="text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="csg-phone" className="text-xs">
+                  Contact Phone
+                </Label>
+                <Input
+                  id="csg-phone"
+                  placeholder="+91 XXXXX XXXXX"
+                  value={form.contactPhone}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, contactPhone: e.target.value }))
+                  }
+                  className="text-xs"
+                />
               </div>
             </div>
-
-            <div
-              className="rounded-lg border p-3 space-y-2"
-              style={{
-                borderColor: "oklch(0.72 0.18 145 / 0.3)",
-                background: "oklch(0.72 0.18 145 / 0.06)",
-              }}
-            >
-              <p
-                className="text-xs font-semibold"
-                style={{ color: "oklch(0.45 0.18 145)" }}
-              >
-                Billing Rate (₹ per MT) — used for client invoice
-              </p>
-              <Input
-                id="csg-billing"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="e.g. 1250"
-                value={form.billingRate}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, billingRate: e.target.value }))
-                }
-                required
-                className="text-xs"
-                data-ocid="consigners.billing_rate.input"
-              />
-              <p className="text-[10px] text-muted-foreground">
-                This is Jeen Trade's billing rate -- used when raising the
-                invoice to clients (Jindal, Tata, etc.). It is separate from
-                vehicle booking rates.
-              </p>
-            </div>
+            <p className="text-[10px] text-muted-foreground bg-muted/30 rounded px-3 py-2">
+              Rates (Association, Non-Association, Vendor, Billing) are
+              configured per Delivery Order (DO) -- not on the OCP master.
+            </p>
 
             <DialogFooter>
               <Button

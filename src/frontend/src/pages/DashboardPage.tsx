@@ -10,7 +10,7 @@ import {
   Truck,
   Wallet,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Bar,
   BarChart,
@@ -24,13 +24,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useActor } from "../hooks/useActor";
 import {
-  useGetAllDieselEntries,
   useGetAllLoadingTrips,
-  useGetAllPettyCash,
+  useGetAllLocalDieselEntries,
+  useGetAllPettyCashLedger,
   useGetAllReceivables,
-  useGetAllTDSEntries,
+  useGetAllTDSRecords,
   useGetAllUnloadings,
 } from "../hooks/useQueries";
 import { formatCurrency, formatNumber } from "../utils/format";
@@ -142,36 +141,15 @@ interface DashboardPageProps {
 }
 
 export default function DashboardPage({ onNavigate }: DashboardPageProps) {
-  const { actor, isFetching } = useActor();
-  // Stagger wave 2 queries by 600ms to reduce simultaneous IC calls on login
-  const [wave2Ready, setWave2Ready] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setWave2Ready(true), 600);
-    return () => clearTimeout(t);
-  }, []);
-
-  // Wave 1 (immediate): primary operational data from localStorage
+  // All data is from localStorage — no actor or staggering needed
   const loadingTripsQuery = useGetAllLoadingTrips();
   const unloadingsQuery = useGetAllUnloadings();
   const receivablesQuery = useGetAllReceivables();
+  const dieselQuery = useGetAllLocalDieselEntries();
+  const pettyCashQuery = useGetAllPettyCashLedger();
+  const tdsQuery = useGetAllTDSRecords();
 
-  // Wave 2 (after 600ms): secondary data from backend
-  const dieselQuery = useGetAllDieselEntries({
-    enabled: wave2Ready && !!actor && !isFetching,
-  });
-  const pettyCashQuery = useGetAllPettyCash({
-    enabled: wave2Ready && !!actor && !isFetching,
-  });
-  const tdsQuery = useGetAllTDSEntries({
-    enabled: wave2Ready && !!actor && !isFetching,
-  });
-
-  const isLoading =
-    loadingTripsQuery.isLoading ||
-    unloadingsQuery.isLoading ||
-    dieselQuery.isLoading ||
-    pettyCashQuery.isLoading ||
-    tdsQuery.isLoading;
+  const isLoading = loadingTripsQuery.isLoading || unloadingsQuery.isLoading;
 
   const loadingTrips = loadingTripsQuery.data ?? [];
   const unloadings = unloadingsQuery.data ?? [];
@@ -204,14 +182,13 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
       0,
     );
 
-    // Diesel expense
+    // Diesel expense — sum of total from LocalDieselEntry
     const totalDiesel = diesel.reduce((s, d) => s + (Number(d.total) || 0), 0);
 
-    // Petty cash
-    const totalPettyCash = pettyCash.reduce(
-      (s, p) => s + (Number(p.amount) || 0),
-      0,
-    );
+    // Petty cash — sum of debit entries from PettyCashLedger
+    const totalPettyCash = pettyCash
+      .filter((p) => p.transactionType === "debit")
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
     // Outstanding receivables (unpaid balance)
     const outstanding = receivables
@@ -274,10 +251,9 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
   // Expense pie chart data
   const expenseData = useMemo(() => {
     const dieselTotal = diesel.reduce((s, d) => s + (Number(d.total) || 0), 0);
-    const pettyTotal = pettyCash.reduce(
-      (s, p) => s + (Number(p.amount) || 0),
-      0,
-    );
+    const pettyTotal = pettyCash
+      .filter((p) => p.transactionType === "debit")
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
     return [
       { name: "Diesel", value: dieselTotal, color: "#f59e0b" },
       { name: "Petty Cash", value: pettyTotal, color: "#6366f1" },

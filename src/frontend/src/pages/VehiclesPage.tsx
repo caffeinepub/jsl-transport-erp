@@ -20,13 +20,17 @@ import { Switch } from "@/components/ui/switch";
 import {
   ChevronDown,
   CreditCard,
+  Eye,
+  FileCheck,
+  FileUp,
   Loader2,
   Pencil,
   Plus,
   Trash2,
   Truck,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   type Vehicle,
@@ -37,6 +41,9 @@ import {
 } from "../hooks/useQueries";
 import { formatDate } from "../utils/format";
 
+// vehicle types: association, non-association, own, rented
+// Documents required for: own, rented
+// 194C(6) undertaking required for all types
 interface VehicleFormData {
   vehicleNumber: string;
   vehicleType: string;
@@ -57,8 +64,17 @@ interface VehicleFormData {
   insuranceExpiry: string;
   pollutionExpiry: string;
   fitnessExpiry: string;
+  undertakingFileUrl: string;
+  undertakingFileName: string;
   isActive: boolean;
 }
+
+const VEHICLE_TYPES = [
+  { value: "association", label: "Association" },
+  { value: "non-association", label: "Non-Association" },
+  { value: "own", label: "Own" },
+  { value: "rented", label: "Rented" },
+];
 
 const defaultForm: VehicleFormData = {
   vehicleNumber: "",
@@ -80,6 +96,8 @@ const defaultForm: VehicleFormData = {
   insuranceExpiry: "",
   pollutionExpiry: "",
   fitnessExpiry: "",
+  undertakingFileUrl: "",
+  undertakingFileName: "",
   isActive: true,
 };
 
@@ -121,14 +139,20 @@ function VehicleTypeBadge({ type }: { type: string }) {
   const cls =
     type === "own"
       ? "bg-blue-50 text-blue-700 border-blue-200"
-      : type === "hired"
+      : type === "association"
         ? "bg-violet-50 text-violet-700 border-violet-200"
-        : "bg-amber-50 text-amber-700 border-amber-200";
+        : type === "non-association"
+          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+          : "bg-amber-50 text-amber-700 border-amber-200";
+  const label =
+    type === "non-association"
+      ? "Non-Assoc."
+      : type.charAt(0).toUpperCase() + type.slice(1);
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${cls}`}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}
     >
-      {type}
+      {label}
     </span>
   );
 }
@@ -277,6 +301,7 @@ export default function VehiclesPage() {
   const [editingItem, setEditingItem] = useState<Vehicle | null>(null);
   const [form, setForm] = useState<VehicleFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<Vehicle | null>(null);
+  const undertakingFileRef = useRef<HTMLInputElement>(null);
 
   const vehicles = vehiclesQuery.data ?? [];
 
@@ -284,6 +309,26 @@ export default function VehiclesPage() {
     setEditingItem(null);
     setForm(defaultForm);
     setDialogOpen(true);
+  };
+
+  const handleUndertakingUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error("File size must be under 5MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setForm((p) => ({
+        ...p,
+        undertakingFileUrl: dataUrl,
+        undertakingFileName: file.name,
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const openEditDialog = (item: Vehicle) => {
@@ -308,10 +353,16 @@ export default function VehiclesPage() {
       insuranceExpiry: item.insuranceExpiry,
       pollutionExpiry: item.pollutionExpiry,
       fitnessExpiry: item.fitnessExpiry,
+      undertakingFileUrl: (item as any).undertakingFileUrl ?? "",
+      undertakingFileName: (item as any).undertakingFileName ?? "",
       isActive: item.isActive,
     });
     setDialogOpen(true);
   };
+
+  // Documents required for own and rented types
+  const needsDocuments =
+    form.vehicleType === "own" || form.vehicleType === "rented";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -332,11 +383,9 @@ export default function VehiclesPage() {
       bank2AccountNo: form.bank2AccountNo,
       bank2IFSC: form.bank2IFSC.toUpperCase(),
       bank2Branch: form.bank2Branch,
-      insuranceExpiry:
-        form.vehicleType !== "rented" ? form.insuranceExpiry : "",
-      pollutionExpiry:
-        form.vehicleType !== "rented" ? form.pollutionExpiry : "",
-      fitnessExpiry: form.vehicleType !== "rented" ? form.fitnessExpiry : "",
+      insuranceExpiry: needsDocuments ? form.insuranceExpiry : "",
+      pollutionExpiry: needsDocuments ? form.pollutionExpiry : "",
+      fitnessExpiry: needsDocuments ? form.fitnessExpiry : "",
       isActive: form.isActive,
     };
     try {
@@ -365,7 +414,6 @@ export default function VehiclesPage() {
   };
 
   const isSaving = createVehicle.isPending || updateVehicle.isPending;
-  const showDocuments = form.vehicleType !== "rented";
 
   return (
     <div className="p-6 space-y-5" data-ocid="vehicles.page">
@@ -519,8 +567,9 @@ export default function VehiclesPage() {
                   </div>
                 )}
 
-                {/* Document expiry for hired/own */}
-                {item.vehicleType !== "rented" && (
+                {/* Document expiry for own/rented */}
+                {(item.vehicleType === "own" ||
+                  item.vehicleType === "rented") && (
                   <div className="rounded-md border border-border bg-muted/30 p-2.5 space-y-1.5">
                     <ExpiryBadge
                       label="Insurance"
@@ -532,6 +581,19 @@ export default function VehiclesPage() {
                     />
                     <ExpiryBadge label="Fitness" dateStr={item.fitnessExpiry} />
                   </div>
+                )}
+                {/* 194C(6) Undertaking badge */}
+                {(item as any).undertakingFileUrl && (
+                  <a
+                    href={(item as any).undertakingFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 transition-colors"
+                  >
+                    <FileCheck className="h-3 w-3 shrink-0" />
+                    <span className="font-medium">194C(6) Undertaking</span>
+                    <Eye className="h-3 w-3 ml-auto shrink-0" />
+                  </a>
                 )}
               </div>
             );
@@ -577,21 +639,27 @@ export default function VehiclesPage() {
                   onValueChange={(v) =>
                     setForm((p) => ({ ...p, vehicleType: v }))
                   }
-                  className="flex gap-4"
+                  className="grid grid-cols-2 gap-2"
                   data-ocid="vehicles.type.radio"
                 >
-                  {["own", "hired", "rented"].map((type) => (
-                    <div key={type} className="flex items-center gap-2">
-                      <RadioGroupItem value={type} id={`vtype-${type}`} />
+                  {VEHICLE_TYPES.map(({ value, label }) => (
+                    <div
+                      key={value}
+                      className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 hover:bg-muted/40 cursor-pointer"
+                    >
+                      <RadioGroupItem value={value} id={`vtype-${value}`} />
                       <Label
-                        htmlFor={`vtype-${type}`}
-                        className="text-xs capitalize cursor-pointer"
+                        htmlFor={`vtype-${value}`}
+                        className="text-xs cursor-pointer font-medium"
                       >
-                        {type}
+                        {label}
                       </Label>
                     </div>
                   ))}
                 </RadioGroup>
+                <p className="text-[10px] text-muted-foreground">
+                  Document expiry dates required for Own and Rented vehicles.
+                </p>
               </div>
 
               <div className="space-y-1.5">
@@ -710,8 +778,8 @@ export default function VehiclesPage() {
               />
             </div>
 
-            {/* Documents section - only for hired/own */}
-            {showDocuments && (
+            {/* Documents section - only for own/rented */}
+            {needsDocuments && (
               <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
                 <p className="text-xs font-semibold text-foreground">
                   Document Expiry Dates
@@ -719,7 +787,7 @@ export default function VehiclesPage() {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="v-insurance" className="text-xs">
-                      Insurance
+                      Insurance Expiry
                     </Label>
                     <Input
                       id="v-insurance"
@@ -737,7 +805,7 @@ export default function VehiclesPage() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="v-pollution" className="text-xs">
-                      Pollution
+                      Pollution Expiry
                     </Label>
                     <Input
                       id="v-pollution"
@@ -754,7 +822,7 @@ export default function VehiclesPage() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="v-fitness" className="text-xs">
-                      Fitness
+                      Fitness Expiry
                     </Label>
                     <Input
                       id="v-fitness"
@@ -772,6 +840,81 @@ export default function VehiclesPage() {
                 </div>
               </div>
             )}
+
+            {/* 194C(6) Undertaking Upload */}
+            <div
+              className="rounded-lg border p-3 space-y-2"
+              style={{
+                borderColor: "oklch(0.55 0.18 250 / 0.3)",
+                background: "oklch(0.55 0.18 250 / 0.05)",
+              }}
+            >
+              <div>
+                <p
+                  className="text-xs font-semibold"
+                  style={{ color: "oklch(0.35 0.18 250)" }}
+                >
+                  Undertaking u/s 194C(6) — Non-Deduction of TDS
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Upload signed undertaking declaring owner does not own more
+                  than 10 vehicles
+                </p>
+              </div>
+              <input
+                ref={undertakingFileRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp"
+                onChange={handleUndertakingUpload}
+                className="hidden"
+                id="v-undertaking-upload"
+              />
+              {form.undertakingFileUrl ? (
+                <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <FileCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <span className="text-xs text-emerald-800 flex-1 truncate font-medium">
+                    {form.undertakingFileName || "Undertaking uploaded"}
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <a
+                      href={form.undertakingFileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center h-6 w-6 justify-center rounded text-emerald-600 hover:bg-emerald-100"
+                      title="View file"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForm((p) => ({
+                          ...p,
+                          undertakingFileUrl: "",
+                          undertakingFileName: "",
+                        }));
+                        if (undertakingFileRef.current)
+                          undertakingFileRef.current.value = "";
+                      }}
+                      className="inline-flex items-center h-6 w-6 justify-center rounded text-destructive hover:bg-destructive/10"
+                      title="Remove"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => undertakingFileRef.current?.click()}
+                  className="flex w-full items-center gap-2 rounded-md border border-dashed border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground hover:bg-muted/40 hover:border-primary/40 transition-colors"
+                  data-ocid="vehicles.undertaking.upload_button"
+                >
+                  <FileUp className="h-4 w-4 shrink-0" />
+                  Upload 194C(6) Undertaking (PDF, JPG, PNG — max 5MB)
+                </button>
+              )}
+            </div>
 
             <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
               <Switch

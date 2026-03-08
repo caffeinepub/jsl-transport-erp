@@ -109,7 +109,6 @@ export default function DieselPage() {
       ?.vehicleNumber ?? vehicleId.toString();
 
   // Combined summary
-  // biome-ignore lint/correctness/useExhaustiveDependencies: getVehicleNo depends on vehicles
   const summaryStats = useMemo(() => {
     const resolveVehicleNo = (vehicleId: bigint) =>
       vehicles.find((v) => v.id.toString() === vehicleId.toString())

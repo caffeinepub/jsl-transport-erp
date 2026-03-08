@@ -680,11 +680,20 @@ export interface DeliveryOrder {
   id: bigint;
   doNumber: string;
   consignerId: bigint;
+  consigneeId: bigint; // which client this DO is for
   doQty: number;
   dispatchedQty: number;
   expiryDate: string;
   fileUrl: string;
   status: string;
+  // Rate configuration per DO (override Consigner master rates)
+  associationRate: number;
+  nonAssociationRate: number;
+  vendorRate: number;
+  billingRate: number;
+  gpsCharges: number; // default 131
+  shortageRate: number; // default 5000 per ton
+  allowOverDispatch: boolean; // if true, allow loading beyond DO qty
 }
 
 // =================== VEHICLE (LOCAL STATE) ===================
@@ -926,6 +935,15 @@ export function useGetAllDeliveryOrders() {
           typeof item.dispatchedQty === "number" ? item.dispatchedQty : 0,
         doQty:
           typeof item.doQty === "number" ? item.doQty : Number(item.doQty) || 0,
+        // Normalize new rate fields with safe defaults for backward compat
+        consigneeId: item.consigneeId ?? 0n,
+        associationRate: Number(item.associationRate) || 0,
+        nonAssociationRate: Number(item.nonAssociationRate) || 0,
+        vendorRate: Number(item.vendorRate) || 0,
+        billingRate: Number(item.billingRate) || 0,
+        gpsCharges: Number(item.gpsCharges) || 131,
+        shortageRate: Number(item.shortageRate) || 5000,
+        allowOverDispatch: item.allowOverDispatch ?? false,
       }));
     },
     staleTime: 0,
@@ -942,6 +960,10 @@ export function useCreateDeliveryOrder() {
         ...data,
         id,
         dispatchedQty: 0,
+        // Ensure defaults for rate fields
+        gpsCharges: data.gpsCharges ?? 131,
+        shortageRate: data.shortageRate ?? 5000,
+        allowOverDispatch: data.allowOverDispatch ?? false,
       };
       saveToStorage("jt_delivery_orders", [...items, newItem]);
       return id;

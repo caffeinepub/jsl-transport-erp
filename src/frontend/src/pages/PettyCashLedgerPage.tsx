@@ -58,6 +58,7 @@ const defaultForm: LedgerFormData = {
 };
 
 const DEBIT_CATEGORIES = [
+  "Vehicle Advance (Cash)",
   "Toll",
   "Repair",
   "Labour",
