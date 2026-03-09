@@ -24,7 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, PackageCheck, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Loader2,
+  PackageCheck,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -89,6 +96,7 @@ export default function UnloadingPage({
   const [editingItem, setEditingItem] = useState<Unloading | null>(null);
   const [form, setForm] = useState<UnloadingFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<Unloading | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const unloadings = unloadingsQuery.data ?? [];
   const trips = tripsQuery.data ?? [];
@@ -155,6 +163,41 @@ export default function UnloadingPage({
   const getTrip = (id: bigint) => trips.find((t) => t.id === id);
   const getVehicleNum = (id: bigint) =>
     vehicles.find((v) => v.id === id)?.vehicleNumber ?? id.toString();
+
+  const filteredUnloadings = unloadings.filter((item) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    const trip = trips.find((t) => {
+      try {
+        return (
+          BigInt(t.id.toString()) === BigInt(item.loadingTripId.toString())
+        );
+      } catch {
+        return false;
+      }
+    });
+    const challanNo = trip?.challanNo ?? "";
+    const vehicleNum = trip
+      ? (vehicles.find((v) => v.id === trip.vehicleId)?.vehicleNumber ?? "")
+      : "";
+    const passNo = trip?.passNumber ?? "";
+    const doNum =
+      trip?.doId && trip.doId !== 0n
+        ? (dos.find((d) => {
+            try {
+              return BigInt(d.id.toString()) === BigInt(trip.doId.toString());
+            } catch {
+              return false;
+            }
+          })?.doNumber ?? "")
+        : "";
+    return (
+      challanNo.toLowerCase().includes(q) ||
+      vehicleNum.toLowerCase().includes(q) ||
+      passNo.toLowerCase().includes(q) ||
+      doNum.toLowerCase().includes(q)
+    );
+  });
 
   // Live calculations from form values
   const computedValues = useMemo(() => {
@@ -386,6 +429,24 @@ export default function UnloadingPage({
         </Button>
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search by challan no, vehicle no, pass no, DO no..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-9 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-ocid="unloading.search_input"
+        />
+        {searchQuery && filteredUnloadings.length < unloadings.length && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Showing {filteredUnloadings.length} of {unloadings.length} records
+          </p>
+        )}
+      </div>
+
       {/* Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {unloadingsQuery.isLoading ? (
@@ -452,7 +513,7 @@ export default function UnloadingPage({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {unloadings.map((item, index) => {
+                {filteredUnloadings.map((item, index) => {
                   const trip = getTrip(item.loadingTripId);
                   return (
                     <TableRow

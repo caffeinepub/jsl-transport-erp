@@ -26,6 +26,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Search,
   Trash2,
   Truck,
   X,
@@ -301,9 +302,19 @@ export default function VehiclesPage() {
   const [editingItem, setEditingItem] = useState<Vehicle | null>(null);
   const [form, setForm] = useState<VehicleFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<Vehicle | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const undertakingFileRef = useRef<HTMLInputElement>(null);
 
   const vehicles = vehiclesQuery.data ?? [];
+
+  const filteredVehicles = vehicles.filter((item) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      item.vehicleNumber.toLowerCase().includes(q) ||
+      item.ownerName.toLowerCase().includes(q)
+    );
+  });
 
   const openCreateDialog = () => {
     setEditingItem(null);
@@ -449,6 +460,24 @@ export default function VehiclesPage() {
         </Button>
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search by vehicle number or owner name..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-9 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-ocid="vehicles.search_input"
+        />
+        {searchQuery && filteredVehicles.length < vehicles.length && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Showing {filteredVehicles.length} of {vehicles.length} vehicles
+          </p>
+        )}
+      </div>
+
       {/* Grid */}
       {vehiclesQuery.isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -471,7 +500,7 @@ export default function VehiclesPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {vehicles.map((item, index) => {
+          {filteredVehicles.map((item, index) => {
             const bankBadge = getBankAccountBadge(item);
             const bankBadgeClass =
               bankBadge === "2 Accounts"

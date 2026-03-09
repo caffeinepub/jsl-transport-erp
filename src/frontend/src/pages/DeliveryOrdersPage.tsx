@@ -35,6 +35,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Search,
   Trash2,
   X,
 } from "lucide-react";
@@ -115,6 +116,7 @@ export default function DeliveryOrdersPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<DeliveryOrder | null>(
     null,
   );
+  const [searchQuery, setSearchQuery] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const dos = dosQuery.data ?? [];
@@ -140,6 +142,13 @@ export default function DeliveryOrdersPage() {
 
   const getConsigneeName = (id: bigint) =>
     id === 0n ? "—" : (consignees.find((c) => c.id === id)?.name ?? "—");
+
+  const filteredDos = dos.filter((item) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    const consignerName = getConsignerName(item.consignerId).toLowerCase();
+    return item.doNumber.toLowerCase().includes(q) || consignerName.includes(q);
+  });
 
   const openCreateDialog = () => {
     setEditingItem(null);
@@ -324,6 +333,24 @@ export default function DeliveryOrdersPage() {
         </Button>
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search by DO number, OCP / Consigner name..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-9 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-ocid="delivery_orders.search_input"
+        />
+        {searchQuery && filteredDos.length < dos.length && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Showing {filteredDos.length} of {dos.length} orders
+          </p>
+        )}
+      </div>
+
       {/* Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {dosQuery.isLoading ? (
@@ -387,7 +414,7 @@ export default function DeliveryOrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {dos.map((item, index) => {
+                {filteredDos.map((item, index) => {
                   const dispatched = getDispatchedQty(item.id);
                   const remaining = item.doQty - dispatched;
                   const pct = item.doQty > 0 ? remaining / item.doQty : 0;

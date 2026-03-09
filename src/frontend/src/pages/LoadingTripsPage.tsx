@@ -31,6 +31,7 @@ import {
   PackageCheck,
   Pencil,
   Plus,
+  Search,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -104,6 +105,7 @@ export default function LoadingTripsPage({
   const [editingItem, setEditingItem] = useState<LoadingTrip | null>(null);
   const [form, setForm] = useState<LoadingTripFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<LoadingTrip | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const trips = tripsQuery.data ?? [];
   const vehicles = vehiclesQuery.data ?? [];
@@ -119,6 +121,19 @@ export default function LoadingTripsPage({
     consignees.find((c) => c.id === id)?.name ?? id.toString();
   const getDONumber = (id: bigint) =>
     dos.find((d) => d.id === id)?.doNumber ?? id.toString();
+
+  const filteredTrips = trips.filter((item) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    const vNum = getVehicleNum(item.vehicleId).toLowerCase();
+    const doNum = item.doId !== 0n ? getDONumber(item.doId).toLowerCase() : "";
+    return (
+      item.challanNo.toLowerCase().includes(q) ||
+      vNum.includes(q) ||
+      item.passNumber.toLowerCase().includes(q) ||
+      doNum.includes(q)
+    );
+  });
 
   const openCreateDialog = () => {
     setEditingItem(null);
@@ -320,6 +335,24 @@ export default function LoadingTripsPage({
         </Button>
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search by challan no, vehicle no, pass no, DO no..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-9 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-ocid="loading_trips.search_input"
+        />
+        {searchQuery && filteredTrips.length < trips.length && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Showing {filteredTrips.length} of {trips.length} trips
+          </p>
+        )}
+      </div>
+
       {/* Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {tripsQuery.isLoading ? (
@@ -376,7 +409,7 @@ export default function LoadingTripsPage({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {trips.map((item, index) => {
+                {filteredTrips.map((item, index) => {
                   const advance = item.advanceCash + item.advanceBank;
                   return (
                     <TableRow
