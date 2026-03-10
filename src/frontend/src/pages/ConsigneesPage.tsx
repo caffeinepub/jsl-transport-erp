@@ -17,8 +17,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import {
+  Building2,
+  Eye,
+  FileText,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   type Consignee,
@@ -28,12 +38,19 @@ import {
   useUpdateConsignee,
 } from "../hooks/useQueries";
 
+interface ConsigneeDocument {
+  name: string;
+  dataUrl: string;
+  type: string;
+}
+
 interface ConsigneeFormData {
   name: string;
   address: string;
   contactPerson: string;
   phone: string;
   gstNumber: string;
+  documents: ConsigneeDocument[];
 }
 
 const defaultForm: ConsigneeFormData = {
@@ -42,7 +59,21 @@ const defaultForm: ConsigneeFormData = {
   contactPerson: "",
   phone: "",
   gstNumber: "",
+  documents: [],
 };
+
+function getDocsForConsignee(id: bigint | number): ConsigneeDocument[] {
+  try {
+    const raw = localStorage.getItem(`jt_consignee_docs_${id}`);
+    return raw ? (JSON.parse(raw) as ConsigneeDocument[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDocsForConsignee(id: bigint | number, docs: ConsigneeDocument[]) {
+  localStorage.setItem(`jt_consignee_docs_${id}`, JSON.stringify(docs));
+}
 
 export default function ConsigneesPage() {
   const consigneesQuery = useGetAllConsignees();
@@ -54,12 +85,14 @@ export default function ConsigneesPage() {
   const [editingItem, setEditingItem] = useState<Consignee | null>(null);
   const [form, setForm] = useState<ConsigneeFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<Consignee | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<ConsigneeDocument | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const consignees = consigneesQuery.data ?? [];
 
   const openCreateDialog = () => {
     setEditingItem(null);
-    setForm(defaultForm);
+    setForm({ ...defaultForm, documents: [] });
     setDialogOpen(true);
   };
 
@@ -71,18 +104,54 @@ export default function ConsigneesPage() {
       contactPerson: item.contactPerson,
       phone: item.phone,
       gstNumber: item.gstNumber,
+      documents: getDocsForConsignee(item.id),
     });
     setDialogOpen(true);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    for (const file of files) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error(`${file.name} exceeds 5MB limit`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        setForm((prev) => ({
+          ...prev,
+          documents: [
+            ...prev.documents,
+            { name: file.name, dataUrl, type: file.type },
+          ],
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = "";
+  };
+
+  const removeDoc = (idx: number) => {
+    setForm((prev) => ({
+      ...prev,
+      documents: prev.documents.filter((_, i) => i !== idx),
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const { documents, ...rest } = form;
       if (editingItem) {
-        await updateConsignee.mutateAsync({ id: editingItem.id, ...form });
+        await updateConsignee.mutateAsync({ id: editingItem.id, ...rest });
+        saveDocsForConsignee(editingItem.id, documents);
         toast.success("Consignee updated successfully");
       } else {
-        await createConsignee.mutateAsync(form);
+        const created = await createConsignee.mutateAsync(rest);
+        const newId = (created as { id?: bigint | number })?.id;
+        if (newId !== undefined) saveDocsForConsignee(newId, documents);
         toast.success("Consignee created successfully");
       }
       setDialogOpen(false);
@@ -95,6 +164,7 @@ export default function ConsigneesPage() {
     if (!deleteConfirm) return;
     try {
       await deleteConsignee.mutateAsync(deleteConfirm.id);
+      localStorage.removeItem(`jt_consignee_docs_${deleteConfirm.id}`);
       toast.success("Consignee deleted");
       setDeleteConfirm(null);
     } catch {
@@ -177,57 +247,87 @@ export default function ConsigneesPage() {
                   <TableHead className="text-xs font-semibold">
                     GST Number
                   </TableHead>
+                  <TableHead className="text-xs font-semibold">
+                    Documents
+                  </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     Actions
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {consignees.map((item, index) => (
-                  <TableRow
-                    key={item.id.toString()}
-                    className="table-row-hover"
-                    data-ocid={`consignees.item.${index + 1}`}
-                  >
-                    <TableCell className="text-xs font-semibold text-foreground">
-                      {item.name}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
-                      {item.address || "—"}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {item.contactPerson || "—"}
-                    </TableCell>
-                    <TableCell className="text-xs font-mono">
-                      {item.phone || "—"}
-                    </TableCell>
-                    <TableCell className="text-xs font-mono">
-                      {item.gstNumber || "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(item)}
-                          className="h-7 w-7 p-0"
-                          data-ocid={`consignees.edit_button.${index + 1}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(item)}
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          data-ocid={`consignees.delete_button.${index + 1}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {consignees.map((item, index) => {
+                  const docs = getDocsForConsignee(item.id);
+                  return (
+                    <TableRow
+                      key={item.id.toString()}
+                      className="table-row-hover"
+                      data-ocid={`consignees.item.${index + 1}`}
+                    >
+                      <TableCell className="text-xs font-semibold text-foreground">
+                        {item.name}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
+                        {item.address || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {item.contactPerson || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono">
+                        {item.phone || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono">
+                        {item.gstNumber || "—"}
+                      </TableCell>
+                      <TableCell>
+                        {docs.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {docs.map((doc) => (
+                              <button
+                                key={doc.name}
+                                type="button"
+                                onClick={() => setPreviewDoc(doc)}
+                                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
+                                title={doc.name}
+                              >
+                                <FileText className="h-3 w-3" />
+                                <span className="max-w-[80px] truncate">
+                                  {doc.name}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(item)}
+                            className="h-7 w-7 p-0"
+                            data-ocid={`consignees.edit_button.${index + 1}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(item)}
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            data-ocid={`consignees.delete_button.${index + 1}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -320,7 +420,69 @@ export default function ConsigneesPage() {
                   className="text-xs font-mono"
                 />
               </div>
+
+              {/* Document Upload */}
+              <div className="col-span-2 space-y-2">
+                <Label className="text-xs">Documents</Label>
+                <button
+                  type="button"
+                  className="w-full border-2 border-dashed border-border rounded-lg p-4 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
+                  onClick={() => fileInputRef.current?.click()}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && fileInputRef.current?.click()
+                  }
+                  data-ocid="consignees.dropzone"
+                >
+                  <Upload className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">
+                    Click to upload documents (PDF, JPG, PNG -- max 5MB each)
+                  </p>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileChange}
+                  data-ocid="consignees.upload_button"
+                />
+                {form.documents.length > 0 && (
+                  <div className="space-y-1.5">
+                    {form.documents.map((doc, idx) => (
+                      <div
+                        key={doc.name}
+                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-md bg-muted/50 border border-border"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                          <span className="text-xs truncate">{doc.name}</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewDoc(doc)}
+                            className="text-muted-foreground hover:text-foreground p-0.5"
+                            title="Preview"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDoc(idx)}
+                            className="text-destructive hover:text-destructive/80 p-0.5"
+                            title="Remove"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+
             <DialogFooter>
               <Button
                 type="button"
@@ -350,6 +512,60 @@ export default function ConsigneesPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Preview Dialog */}
+      <Dialog open={!!previewDoc} onOpenChange={() => setPreviewDoc(null)}>
+        <DialogContent
+          className="max-w-2xl"
+          data-ocid="consignees.preview.dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display text-sm flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              {previewDoc?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center justify-center min-h-[300px] bg-muted/30 rounded-lg overflow-hidden">
+            {previewDoc?.type === "application/pdf" ? (
+              <iframe
+                src={previewDoc.dataUrl}
+                className="w-full h-[500px]"
+                title={previewDoc.name}
+              />
+            ) : (
+              <img
+                src={previewDoc?.dataUrl}
+                alt={previewDoc?.name ?? "Document preview"}
+                className="max-w-full max-h-[500px] object-contain"
+              />
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (!previewDoc) return;
+                const a = document.createElement("a");
+                a.href = previewDoc.dataUrl;
+                a.download = previewDoc.name;
+                a.click();
+              }}
+              className="text-xs"
+            >
+              Download
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setPreviewDoc(null)}
+              className="text-xs"
+              data-ocid="consignees.preview.close_button"
+            >
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
