@@ -25,12 +25,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Download,
+  Eye,
   Loader2,
   PackageCheck,
   Pencil,
   Plus,
+  Printer,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -48,6 +52,68 @@ import {
 } from "../hooks/useQueries";
 import { formatDate } from "../utils/format";
 
+function viewFile(fileUrl: string) {
+  if (fileUrl.startsWith("data:")) {
+    const [header, base64] = fileUrl.split(",");
+    const mimeMatch = header.match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+    const byteChars = atob(base64);
+    const byteArr = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++)
+      byteArr[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([byteArr], { type: mime });
+    window.open(URL.createObjectURL(blob), "_blank");
+  } else {
+    window.open(fileUrl, "_blank");
+  }
+}
+
+function downloadFile(fileUrl: string, fileName: string) {
+  const link = document.createElement("a");
+  link.href = fileUrl;
+  link.download = fileName || "file";
+  link.click();
+}
+
+function printFile(fileUrl: string) {
+  if (fileUrl.startsWith("data:image")) {
+    const win = window.open("", "_blank");
+    win?.document.write(
+      `<html><body style="margin:0"><img src="${fileUrl}" style="max-width:100%" onload="window.print();window.close()"/></body></html>`,
+    );
+    win?.document.close();
+  } else if (
+    fileUrl.startsWith("data:application/pdf") ||
+    fileUrl.includes(".pdf")
+  ) {
+    if (fileUrl.startsWith("data:")) {
+      const [header, base64] = fileUrl.split(",");
+      const mimeMatch = header.match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : "application/pdf";
+      const byteChars = atob(base64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++)
+        byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      win?.addEventListener("load", () => {
+        win.print();
+      });
+    } else {
+      const win = window.open(fileUrl, "_blank");
+      win?.addEventListener("load", () => {
+        win?.print();
+      });
+    }
+  } else {
+    const win = window.open(fileUrl, "_blank");
+    win?.addEventListener("load", () => {
+      win?.print();
+    });
+  }
+}
+
 interface UnloadingFormData {
   loadingTripId: string;
   unloadingDate: string;
@@ -59,6 +125,8 @@ interface UnloadingFormData {
   bookingRate: string;
   billingRate: string;
   shortageRate: string; // per ton, default 5000
+  unloadingCopyUrl: string;
+  unloadingCopyName: string;
 }
 
 const defaultForm: UnloadingFormData = {
@@ -72,6 +140,8 @@ const defaultForm: UnloadingFormData = {
   bookingRate: "",
   billingRate: "",
   shortageRate: "5000",
+  unloadingCopyUrl: "",
+  unloadingCopyName: "",
 };
 
 interface UnloadingPageProps {
@@ -286,6 +356,8 @@ export default function UnloadingPage({
       bookingRate: item.bookingRate.toString(),
       billingRate: item.billingRate.toString(),
       shortageRate: shortageRateFromData,
+      unloadingCopyUrl: (item as any).unloadingCopyUrl ?? "",
+      unloadingCopyName: (item as any).unloadingCopyName ?? "",
     });
     setDialogOpen(true);
   };
@@ -357,6 +429,12 @@ export default function UnloadingPage({
       vehicleCost: cv.vehicleCost,
       clientBillAmount: cv.clientBillAmount,
       netPayableToVehicle: cv.netPayableToVehicle,
+      ...(form.unloadingCopyUrl
+        ? {
+            unloadingCopyUrl: form.unloadingCopyUrl,
+            unloadingCopyName: form.unloadingCopyName,
+          }
+        : {}),
     };
     try {
       if (editingItem) {
@@ -591,6 +669,50 @@ export default function UnloadingPage({
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
+                          {(item as any).unloadingCopyUrl && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  viewFile((item as any).unloadingCopyUrl)
+                                }
+                                className="h-7 w-7 p-0 text-blue-600 hover:text-blue-700"
+                                title="View unloading copy"
+                                data-ocid={`unloading.view.button.${index + 1}`}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  downloadFile(
+                                    (item as any).unloadingCopyUrl,
+                                    (item as any).unloadingCopyName ||
+                                      "unloading-copy",
+                                  )
+                                }
+                                className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700"
+                                title="Download unloading copy"
+                                data-ocid={`unloading.download.button.${index + 1}`}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  printFile((item as any).unloadingCopyUrl)
+                                }
+                                className="h-7 w-7 p-0 text-amber-600 hover:text-amber-700"
+                                title="Print unloading copy"
+                                data-ocid={`unloading.print.button.${index + 1}`}
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -861,6 +983,96 @@ export default function UnloadingPage({
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Unloading Copy Upload */}
+            <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+              <p className="text-xs font-semibold text-foreground">
+                Unloading Copy <span className="text-destructive">*</span>
+              </p>
+              {form.unloadingCopyUrl ? (
+                <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <span className="text-xs text-emerald-700 font-medium flex-1 truncate">
+                    {form.unloadingCopyName || "Uploaded file"}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => viewFile(form.unloadingCopyUrl)}
+                    className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700"
+                    title="View"
+                    data-ocid="unloading.copy_view.button"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      downloadFile(
+                        form.unloadingCopyUrl,
+                        form.unloadingCopyName || "unloading-copy",
+                      )
+                    }
+                    className="h-6 w-6 p-0 text-emerald-600 hover:text-emerald-700"
+                    title="Download"
+                    data-ocid="unloading.copy_download.button"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setForm((p) => ({
+                        ...p,
+                        unloadingCopyUrl: "",
+                        unloadingCopyName: "",
+                      }))
+                    }
+                    className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                    title="Remove"
+                    data-ocid="unloading.copy_remove.button"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <label
+                  className="flex cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground hover:border-primary/40 hover:bg-muted/50 transition-colors"
+                  data-ocid="unloading.copy_upload.button"
+                >
+                  <Download className="h-4 w-4 mb-1 opacity-50" />
+                  <span>
+                    Click to upload unloading copy (PDF, JPG, PNG — max 5MB)
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 5 * 1024 * 1024) {
+                        toast.error("File too large. Max 5MB.");
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        setForm((p) => ({
+                          ...p,
+                          unloadingCopyUrl: ev.target?.result as string,
+                          unloadingCopyName: file.name,
+                        }));
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+              )}
             </div>
 
             {/* Live Calculation Preview — Two-Panel Excel Style */}

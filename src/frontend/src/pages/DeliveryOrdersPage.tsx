@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/table";
 import {
   AlertTriangle,
+  Download,
   ExternalLink,
   Eye,
   FileCheck,
@@ -35,6 +36,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Printer,
   Search,
   Trash2,
   X,
@@ -99,6 +101,68 @@ function getDaysUntilExpiry(dateStr: string): number {
   return Math.floor(
     (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
   );
+}
+
+function viewFile(fileUrl: string) {
+  if (fileUrl.startsWith("data:")) {
+    const [header, base64] = fileUrl.split(",");
+    const mimeType = header.match(/:(.*?);/)?.[1] ?? "application/octet-stream";
+    const binary = atob(base64);
+    const array = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+    const blob = new Blob([array], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+  } else {
+    window.open(fileUrl, "_blank");
+  }
+}
+
+function downloadFile(fileUrl: string, fileName: string) {
+  const link = document.createElement("a");
+  link.href = fileUrl;
+  link.download = fileName || "DO_file";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function printFile(fileUrl: string) {
+  if (fileUrl.startsWith("data:image")) {
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(
+        `<html><body style="margin:0"><img src="${fileUrl}" style="max-width:100%" onload="window.print();window.close()"/></body></html>`,
+      );
+      win.document.close();
+    }
+  } else if (
+    fileUrl.startsWith("data:application/pdf") ||
+    fileUrl.includes(".pdf")
+  ) {
+    if (fileUrl.startsWith("data:")) {
+      const [header, base64] = fileUrl.split(",");
+      const mimeType = header.match(/:(.*?);/)?.[1] ?? "application/pdf";
+      const binary = atob(base64);
+      const array = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+      const blob = new Blob([array], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (win) {
+        win.onload = () => {
+          win.print();
+        };
+      }
+    } else {
+      const win = window.open(fileUrl, "_blank");
+      if (win) win.onload = () => win.print();
+    }
+  } else {
+    // Fallback: try opening and printing
+    const win = window.open(fileUrl, "_blank");
+    if (win) win.onload = () => win.print();
+  }
 }
 
 export default function DeliveryOrdersPage() {
@@ -426,6 +490,7 @@ export default function DeliveryOrdersPage() {
                         : pct <= 0.1
                           ? "bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-400"
                           : "bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-400";
+                  const fileName = (item as any).fileName || "DO_file";
                   return (
                     <TableRow
                       key={item.id.toString()}
@@ -494,15 +559,40 @@ export default function DeliveryOrdersPage() {
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           {item.fileUrl && (
-                            <a
-                              href={item.fileUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 h-7 w-7 justify-center rounded text-primary hover:bg-muted"
-                              title="View DO file"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                            </a>
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => viewFile(item.fileUrl)}
+                                className="h-7 w-7 p-0 text-primary hover:text-primary"
+                                title="View DO file"
+                                data-ocid={`delivery_orders.view_button.${index + 1}`}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  downloadFile(item.fileUrl, fileName)
+                                }
+                                className="h-7 w-7 p-0 text-blue-600 hover:text-blue-700"
+                                title="Download DO file"
+                                data-ocid={`delivery_orders.download_button.${index + 1}`}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => printFile(item.fileUrl)}
+                                className="h-7 w-7 p-0 text-amber-600 hover:text-amber-700"
+                                title="Print DO file"
+                                data-ocid={`delivery_orders.print_button.${index + 1}`}
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                            </>
                           )}
                           <Button
                             variant="ghost"

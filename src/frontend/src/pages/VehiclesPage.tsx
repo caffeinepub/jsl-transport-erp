@@ -20,12 +20,14 @@ import { Switch } from "@/components/ui/switch";
 import {
   ChevronDown,
   CreditCard,
+  Download,
   Eye,
   FileCheck,
   FileUp,
   Loader2,
   Pencil,
   Plus,
+  Printer,
   Search,
   Trash2,
   Truck,
@@ -44,6 +46,68 @@ import { formatDate } from "../utils/format";
 
 // vehicle types: association, non-association, own, rented
 // Documents required for: own, rented
+function viewFile(fileUrl: string) {
+  if (fileUrl.startsWith("data:")) {
+    const [header, base64] = fileUrl.split(",");
+    const mimeMatch = header.match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+    const byteChars = atob(base64);
+    const byteArr = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++)
+      byteArr[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([byteArr], { type: mime });
+    window.open(URL.createObjectURL(blob), "_blank");
+  } else {
+    window.open(fileUrl, "_blank");
+  }
+}
+
+function downloadFile(fileUrl: string, fileName: string) {
+  const link = document.createElement("a");
+  link.href = fileUrl;
+  link.download = fileName || "file";
+  link.click();
+}
+
+function printFile(fileUrl: string) {
+  if (fileUrl.startsWith("data:image")) {
+    const win = window.open("", "_blank");
+    win?.document.write(
+      `<html><body style="margin:0"><img src="${fileUrl}" style="max-width:100%" onload="window.print();window.close()"/></body></html>`,
+    );
+    win?.document.close();
+  } else if (
+    fileUrl.startsWith("data:application/pdf") ||
+    fileUrl.includes(".pdf")
+  ) {
+    if (fileUrl.startsWith("data:")) {
+      const [header, base64] = fileUrl.split(",");
+      const mimeMatch = header.match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : "application/pdf";
+      const byteChars = atob(base64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++)
+        byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      win?.addEventListener("load", () => {
+        win.print();
+      });
+    } else {
+      const win = window.open(fileUrl, "_blank");
+      win?.addEventListener("load", () => {
+        win?.print();
+      });
+    }
+  } else {
+    const win = window.open(fileUrl, "_blank");
+    win?.addEventListener("load", () => {
+      win?.print();
+    });
+  }
+}
+
 // 194C(6) undertaking required for all types
 interface VehicleFormData {
   vehicleNumber: string;
@@ -613,16 +677,47 @@ export default function VehiclesPage() {
                 )}
                 {/* 194C(6) Undertaking badge */}
                 {(item as any).undertakingFileUrl && (
-                  <a
-                    href={(item as any).undertakingFileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 transition-colors"
-                  >
+                  <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700">
                     <FileCheck className="h-3 w-3 shrink-0" />
-                    <span className="font-medium">194C(6) Undertaking</span>
-                    <Eye className="h-3 w-3 ml-auto shrink-0" />
-                  </a>
+                    <span className="font-medium flex-1">
+                      194C(6) Undertaking
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => viewFile((item as any).undertakingFileUrl)}
+                      className="h-5 w-5 flex items-center justify-center rounded hover:bg-emerald-200 transition-colors"
+                      title="View"
+                      data-ocid={`vehicles.undertaking_view.button.${index + 1}`}
+                    >
+                      <Eye className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadFile(
+                          (item as any).undertakingFileUrl,
+                          (item as any).undertakingFileName ||
+                            "194C6-undertaking",
+                        )
+                      }
+                      className="h-5 w-5 flex items-center justify-center rounded hover:bg-emerald-200 transition-colors"
+                      title="Download"
+                      data-ocid={`vehicles.undertaking_download.button.${index + 1}`}
+                    >
+                      <Download className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printFile((item as any).undertakingFileUrl)
+                      }
+                      className="h-5 w-5 flex items-center justify-center rounded hover:bg-emerald-200 transition-colors"
+                      title="Print"
+                      data-ocid={`vehicles.undertaking_print.button.${index + 1}`}
+                    >
+                      <Printer className="h-3 w-3" />
+                    </button>
+                  </div>
                 )}
               </div>
             );
