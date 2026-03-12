@@ -33,18 +33,21 @@ import {
   Plus,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
   type LoadingTrip,
   useCreateLoadingTrip,
+  useCreateLocalDieselEntry,
   useCreatePettyCashLedger,
   useDeleteLoadingTrip,
   useGetAllConsignees,
   useGetAllConsigners,
   useGetAllDeliveryOrders,
   useGetAllLoadingTrips,
+  useGetAllPetrolBunks,
   useGetAllVehicles,
   useUpdateLoadingTrip,
 } from "../hooks/useQueries";
@@ -100,8 +103,13 @@ export default function LoadingTripsPage({
   const updateTrip = useUpdateLoadingTrip();
   const deleteTrip = useDeleteLoadingTrip();
   const createPettyCash = useCreatePettyCashLedger();
+  const createDieselEntry = useCreateLocalDieselEntry();
+  const petrolBunksQuery = useGetAllPetrolBunks();
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const [vehicleDropdownOpen, setVehicleDropdownOpen] = useState(false);
+  const [bunkDropdownOpen, setBunkDropdownOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LoadingTrip | null>(null);
   const [form, setForm] = useState<LoadingTripFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<LoadingTrip | null>(null);
@@ -112,6 +120,7 @@ export default function LoadingTripsPage({
   const dos = dosQuery.data ?? [];
   const consigners = consignersQuery.data ?? [];
   const consignees = consigneesQuery.data ?? [];
+  const petrolBunks = petrolBunksQuery.data ?? [];
 
   const getVehicleNum = (id: bigint) =>
     vehicles.find((v) => v.id === id)?.vehicleNumber ?? id.toString();
@@ -138,6 +147,8 @@ export default function LoadingTripsPage({
   const openCreateDialog = () => {
     setEditingItem(null);
     setForm(defaultForm);
+    setVehicleSearch("");
+    setVehicleDropdownOpen(false);
     setDialogOpen(true);
   };
 
@@ -161,16 +172,23 @@ export default function LoadingTripsPage({
     }));
   };
 
+  const normalizeId = (v: bigint | number | string) =>
+    String(Number(BigInt(v.toString())));
+
   const openEditDialog = (item: LoadingTrip) => {
     setEditingItem(item);
+    const vId = normalizeId(item.vehicleId);
+    const foundVehicle = vehicles.find((v) => normalizeId(v.id) === vId);
+    setVehicleSearch(foundVehicle?.vehicleNumber ?? "");
+    setVehicleDropdownOpen(false);
     setForm({
       loadingDate: item.loadingDate,
       challanNo: item.challanNo,
-      vehicleId: item.vehicleId.toString(),
+      vehicleId: vId,
       passNumber: item.passNumber,
-      doId: item.doId.toString(),
-      consignerId: item.consignerId.toString(),
-      consigneeId: item.consigneeId.toString(),
+      doId: normalizeId(item.doId),
+      consignerId: normalizeId(item.consignerId),
+      consigneeId: normalizeId(item.consigneeId),
       loadingQty: item.loadingQty.toString(),
       advanceCash: item.advanceCash.toString(),
       advanceBank: item.advanceBank.toString(),
@@ -262,6 +280,35 @@ export default function LoadingTripsPage({
             reference: form.challanNo,
           });
         }
+        // Auto-record HSD diesel entry for update
+        if (Number(form.hsdAmount) > 0 && form.petrolBunkName) {
+          // Remove old auto diesel entry for this challan
+          const dieselItems = JSON.parse(
+            localStorage.getItem("jt_local_diesel") || "[]",
+          );
+          const filtered = dieselItems.filter(
+            (d: { remark?: string }) => !d.remark?.includes(form.challanNo),
+          );
+          localStorage.setItem("jt_local_diesel", JSON.stringify(filtered));
+          // Create new entry
+          await createDieselEntry.mutateAsync({
+            truckId: BigInt(form.vehicleId),
+            date: form.loadingDate,
+            vendor: form.petrolBunkName,
+            litre: Number(form.hsdLitres) || 0,
+            rate:
+              Number(form.hsdLitres) > 0
+                ? Math.round(
+                    (Number(form.hsdAmount) || 0) / Number(form.hsdLitres),
+                  )
+                : 0,
+            total: Number(form.hsdAmount) || 0,
+            billFile: "",
+            remark: `Auto from trip Challan: ${form.challanNo}`,
+            source: "trip",
+            tripRef: form.challanNo,
+          });
+        }
         toast.success("Loading trip updated");
       } else {
         await createTrip.mutateAsync(data);
@@ -275,6 +322,26 @@ export default function LoadingTripsPage({
             narration: `Cash Advance to vehicle ${vehicleNum} | Challan: ${form.challanNo}`,
             amount: cashAmt,
             reference: form.challanNo,
+          });
+        }
+        // Auto-record HSD diesel entry for new trip
+        if (Number(form.hsdAmount) > 0 && form.petrolBunkName) {
+          await createDieselEntry.mutateAsync({
+            truckId: BigInt(form.vehicleId),
+            date: form.loadingDate,
+            vendor: form.petrolBunkName,
+            litre: Number(form.hsdLitres) || 0,
+            rate:
+              Number(form.hsdLitres) > 0
+                ? Math.round(
+                    (Number(form.hsdAmount) || 0) / Number(form.hsdLitres),
+                  )
+                : 0,
+            total: Number(form.hsdAmount) || 0,
+            billFile: "",
+            remark: `Auto from trip Challan: ${form.challanNo}`,
+            source: "trip",
+            tripRef: form.challanNo,
           });
         }
         toast.success("Loading trip recorded");
@@ -550,32 +617,81 @@ export default function LoadingTripsPage({
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Vehicle *</Label>
-                <Select
-                  value={form.vehicleId}
-                  onValueChange={(v) =>
-                    setForm((p) => ({ ...p, vehicleId: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="loading_trips.vehicle.select"
-                  >
-                    <SelectValue placeholder="Select vehicle" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {vehicles
-                      .filter((v) => v.isActive)
-                      .map((v) => (
-                        <SelectItem
-                          key={v.id.toString()}
-                          value={v.id.toString()}
-                          className="text-xs"
-                        >
-                          {v.vehicleNumber}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <div className="flex items-center border border-input rounded-md bg-background px-2 h-9 gap-1">
+                    <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Search vehicle number..."
+                      value={vehicleSearch}
+                      onChange={(e) => {
+                        setVehicleSearch(e.target.value);
+                        setVehicleDropdownOpen(true);
+                        if (!e.target.value)
+                          setForm((p) => ({ ...p, vehicleId: "" }));
+                      }}
+                      onFocus={() => setVehicleDropdownOpen(true)}
+                      onBlur={() =>
+                        setTimeout(() => setVehicleDropdownOpen(false), 150)
+                      }
+                      className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+                      data-ocid="loading_trips.vehicle.search_input"
+                    />
+                    {form.vehicleId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVehicleSearch("");
+                          setForm((p) => ({ ...p, vehicleId: "" }));
+                        }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  {vehicleDropdownOpen && vehicleSearch && (
+                    <div className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-popover shadow-lg max-h-48 overflow-y-auto">
+                      {vehicles
+                        .filter(
+                          (v) =>
+                            v.isActive &&
+                            v.vehicleNumber
+                              .toLowerCase()
+                              .includes(vehicleSearch.toLowerCase()),
+                        )
+                        .slice(0, 6)
+                        .map((v) => (
+                          <button
+                            key={v.id.toString()}
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                            onMouseDown={() => {
+                              setForm((p) => ({
+                                ...p,
+                                vehicleId: String(Number(v.id)),
+                              }));
+                              setVehicleSearch(v.vehicleNumber);
+                              setVehicleDropdownOpen(false);
+                            }}
+                          >
+                            {v.vehicleNumber}
+                          </button>
+                        ))}
+                      {vehicles.filter(
+                        (v) =>
+                          v.isActive &&
+                          v.vehicleNumber
+                            .toLowerCase()
+                            .includes(vehicleSearch.toLowerCase()),
+                      ).length === 0 && (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">
+                          No vehicles found
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="lt-pass" className="text-xs">
@@ -819,16 +935,59 @@ export default function LoadingTripsPage({
                   <Label htmlFor="lt-bunk" className="text-xs">
                     Petrol Bunk Name
                   </Label>
-                  <Input
-                    id="lt-bunk"
-                    placeholder="e.g. HP Petrol Bunk"
-                    value={form.petrolBunkName}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, petrolBunkName: e.target.value }))
-                    }
-                    className="text-xs"
-                    data-ocid="loading_trips.bunk.input"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="lt-bunk"
+                      placeholder="e.g. HP Petrol Bunk"
+                      value={form.petrolBunkName}
+                      onChange={(e) => {
+                        setForm((p) => ({
+                          ...p,
+                          petrolBunkName: e.target.value,
+                        }));
+                        setBunkDropdownOpen(true);
+                      }}
+                      onFocus={() => setBunkDropdownOpen(true)}
+                      onBlur={() =>
+                        setTimeout(() => setBunkDropdownOpen(false), 150)
+                      }
+                      className="text-xs"
+                      data-ocid="loading_trips.bunk.input"
+                    />
+                    {bunkDropdownOpen &&
+                      form.petrolBunkName &&
+                      petrolBunks.filter((b) =>
+                        b.bunkName
+                          .toLowerCase()
+                          .includes(form.petrolBunkName.toLowerCase()),
+                      ).length > 0 && (
+                        <div className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-popover shadow-lg max-h-36 overflow-y-auto">
+                          {petrolBunks
+                            .filter((b) =>
+                              b.bunkName
+                                .toLowerCase()
+                                .includes(form.petrolBunkName.toLowerCase()),
+                            )
+                            .slice(0, 6)
+                            .map((b) => (
+                              <button
+                                key={b.id.toString()}
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                                onMouseDown={() => {
+                                  setForm((p) => ({
+                                    ...p,
+                                    petrolBunkName: b.bunkName,
+                                  }));
+                                  setBunkDropdownOpen(false);
+                                }}
+                              >
+                                {b.bunkName}
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                  </div>
                 </div>
               </div>
             </div>

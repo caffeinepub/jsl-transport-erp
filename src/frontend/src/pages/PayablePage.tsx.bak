@@ -185,7 +185,7 @@ export default function PayablePage() {
   const openPaymentDialog = (record: Payable) => {
     setPaymentDialog(record);
     setPaymentForm({
-      amountPaid: "", // always start with empty for incremental entry
+      amountPaid: record.amountPaid > 0 ? record.amountPaid.toString() : "",
       paymentDate: record.paymentDate,
       paymentMode: record.paymentMode,
       referenceNumber: record.referenceNumber,
@@ -653,9 +653,7 @@ export default function PayablePage() {
                             data-ocid={`payable.pay_button.${index + 1}`}
                           >
                             <CreditCard className="h-3 w-3" />
-                            {record.status === "partial"
-                              ? `Pay Remaining (₹${record.balance.toLocaleString("en-IN")})`
-                              : "Pay"}
+                            Pay
                           </Button>
                         )}
                         {record.status === "paid" && (
