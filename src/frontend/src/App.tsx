@@ -32,21 +32,21 @@ function AuthenticatedApp() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const { actor } = useActor();
 
-  // Timeout: after 8 seconds stop blocking on actor init
+  // Timeout: after 5 seconds stop blocking on actor init
   const [actorTimedOut, setActorTimedOut] = useState(false);
   useEffect(() => {
     if (actor) return;
-    const t = setTimeout(() => setActorTimedOut(true), 8000);
+    const t = setTimeout(() => setActorTimedOut(true), 5000);
     return () => clearTimeout(t);
   }, [actor]);
 
   const { data: userProfile, isLoading: profileLoading } = useGetUserProfile();
 
-  // If profile query has been loading for more than 15s total, stop waiting
+  // If profile query has been loading for more than 8s total, stop waiting
   const [profileTimedOut, setProfileTimedOut] = useState(false);
   useEffect(() => {
     if (!profileLoading) return;
-    const t = setTimeout(() => setProfileTimedOut(true), 15000);
+    const t = setTimeout(() => setProfileTimedOut(true), 8000);
     return () => clearTimeout(t);
   }, [profileLoading]);
 

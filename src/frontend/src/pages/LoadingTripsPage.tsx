@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import {
   Loader2,
+  Lock,
   Package,
   PackageCheck,
   Pencil,
@@ -43,6 +44,7 @@ import {
   useCreateLocalDieselEntry,
   useCreatePettyCashLedger,
   useDeleteLoadingTrip,
+  useGetAllBillingInvoices,
   useGetAllConsignees,
   useGetAllConsigners,
   useGetAllDeliveryOrders,
@@ -96,6 +98,7 @@ export default function LoadingTripsPage({
 }: LoadingTripsPageProps) {
   const tripsQuery = useGetAllLoadingTrips();
   const vehiclesQuery = useGetAllVehicles();
+  const billingInvoicesQuery = useGetAllBillingInvoices();
   const dosQuery = useGetAllDeliveryOrders();
   const consignersQuery = useGetAllConsigners();
   const consigneesQuery = useGetAllConsignees();
@@ -117,6 +120,12 @@ export default function LoadingTripsPage({
 
   const trips = tripsQuery.data ?? [];
   const vehicles = vehiclesQuery.data ?? [];
+  const billingInvoices = billingInvoicesQuery.data ?? [];
+  const billedTripIds = new Set<string>(
+    billingInvoices.flatMap((inv) =>
+      (inv.tripIds ?? []).map((id) => id.toString()),
+    ),
+  );
   const dos = dosQuery.data ?? [];
   const consigners = consignersQuery.data ?? [];
   const consignees = consigneesQuery.data ?? [];
@@ -478,10 +487,16 @@ export default function LoadingTripsPage({
               <TableBody>
                 {filteredTrips.map((item, index) => {
                   const advance = item.advanceCash + item.advanceBank;
+                  const isBilledTrip = billedTripIds.has(item.id.toString());
                   return (
                     <TableRow
                       key={item.id.toString()}
                       className="table-row-hover"
+                      style={
+                        isBilledTrip
+                          ? { background: "oklch(0.97 0.04 85)" }
+                          : undefined
+                      }
                       data-ocid={`loading_trips.item.${index + 1}`}
                     >
                       <TableCell className="text-xs font-mono font-semibold">
@@ -514,17 +529,25 @@ export default function LoadingTripsPage({
                         {item.petrolBunkName || "—"}
                       </TableCell>
                       <TableCell>
-                        {item.status === "unloaded" ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium status-paid">
-                            <PackageCheck className="h-3 w-3" />
-                            Unloaded
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium status-partial">
-                            <Package className="h-3 w-3" />
-                            Loaded
-                          </span>
-                        )}
+                        <div className="flex flex-col gap-1">
+                          {item.status === "unloaded" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium status-paid">
+                              <PackageCheck className="h-3 w-3" />
+                              Unloaded
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium status-partial">
+                              <Package className="h-3 w-3" />
+                              Loaded
+                            </span>
+                          )}
+                          {isBilledTrip && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                              <Lock className="h-3 w-3" />
+                              Billed
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -542,8 +565,16 @@ export default function LoadingTripsPage({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => openEditDialog(item)}
+                            onClick={() =>
+                              !isBilledTrip && openEditDialog(item)
+                            }
                             className="h-7 w-7 p-0"
+                            disabled={isBilledTrip}
+                            title={
+                              isBilledTrip
+                                ? "Locked – trip is included in a bill"
+                                : "Edit"
+                            }
                             data-ocid={`loading_trips.edit_button.${index + 1}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -551,8 +582,16 @@ export default function LoadingTripsPage({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setDeleteConfirm(item)}
+                            onClick={() =>
+                              !isBilledTrip && setDeleteConfirm(item)
+                            }
                             className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            disabled={isBilledTrip}
+                            title={
+                              isBilledTrip
+                                ? "Locked – trip is included in a bill"
+                                : "Delete"
+                            }
                             data-ocid={`loading_trips.delete_button.${index + 1}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

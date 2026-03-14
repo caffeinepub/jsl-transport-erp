@@ -28,6 +28,7 @@ import {
   Download,
   Eye,
   Loader2,
+  Lock,
   PackageCheck,
   Pencil,
   Plus,
@@ -43,6 +44,7 @@ import {
   type Unloading,
   useCreateUnloading,
   useDeleteUnloading,
+  useGetAllBillingInvoices,
   useGetAllConsigners,
   useGetAllDeliveryOrders,
   useGetAllLoadingTrips,
@@ -158,6 +160,7 @@ export default function UnloadingPage({
   const vehiclesQuery = useGetAllVehicles();
   const consignersQuery = useGetAllConsigners();
   const dosQuery = useGetAllDeliveryOrders();
+  const billingInvoicesQuery = useGetAllBillingInvoices();
   const createUnloading = useCreateUnloading();
   const updateUnloading = useUpdateUnloading();
   const deleteUnloading = useDeleteUnloading();
@@ -172,6 +175,13 @@ export default function UnloadingPage({
   const trips = tripsQuery.data ?? [];
   const vehicles = vehiclesQuery.data ?? [];
   const dos = dosQuery.data ?? [];
+  const billingInvoices = billingInvoicesQuery.data ?? [];
+  const billedUnloadingMap = new Map<string, string>();
+  for (const inv of billingInvoices) {
+    for (const uid of inv.unloadingIds ?? []) {
+      billedUnloadingMap.set(uid.toString(), inv.invoiceNumber);
+    }
+  }
 
   const loadedTrips = trips.filter((t) => t.status === "loaded");
 
@@ -593,10 +603,18 @@ export default function UnloadingPage({
               <TableBody>
                 {filteredUnloadings.map((item, index) => {
                   const trip = getTrip(item.loadingTripId);
+                  const billedInvoice = billedUnloadingMap.get(
+                    item.id.toString(),
+                  );
                   return (
                     <TableRow
                       key={item.id.toString()}
                       className="table-row-hover"
+                      style={
+                        billedInvoice
+                          ? { background: "oklch(0.97 0.04 85)" }
+                          : undefined
+                      }
                       data-ocid={`unloading.item.${index + 1}`}
                     >
                       <TableCell className="text-xs font-mono font-semibold">
@@ -651,11 +669,28 @@ export default function UnloadingPage({
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {billedInvoice && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 mr-1"
+                              title={`Invoice: ${billedInvoice}`}
+                            >
+                              <Lock className="h-3 w-3" />
+                              Billed
+                            </span>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => openEditDialog(item)}
+                            onClick={() =>
+                              !billedInvoice && openEditDialog(item)
+                            }
                             className="h-7 w-7 p-0"
+                            disabled={!!billedInvoice}
+                            title={
+                              billedInvoice
+                                ? `Locked – included in invoice ${billedInvoice}`
+                                : "Edit"
+                            }
                             data-ocid={`unloading.edit_button.${index + 1}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -663,8 +698,16 @@ export default function UnloadingPage({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setDeleteConfirm(item)}
+                            onClick={() =>
+                              !billedInvoice && setDeleteConfirm(item)
+                            }
                             className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            disabled={!!billedInvoice}
+                            title={
+                              billedInvoice
+                                ? `Locked – included in invoice ${billedInvoice}`
+                                : "Delete"
+                            }
                             data-ocid={`unloading.delete_button.${index + 1}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

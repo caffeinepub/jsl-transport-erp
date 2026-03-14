@@ -447,9 +447,15 @@ export default function BillingPage() {
     filterDateTo !== "";
 
   const nextInvoiceNumber = () => {
-    const year = new Date().getFullYear();
-    const count = invoices.length + 1;
-    return `INV-${year}-${String(count).padStart(3, "0")}`;
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const thisMonthCount = invoices.filter(
+      (inv) =>
+        inv.invoiceDate?.startsWith(
+          `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+        ) || inv.invoiceNumber?.includes(`/${ym}/`),
+    ).length;
+    return `INV/${ym}/${String(thisMonthCount + 1).padStart(3, "0")}`;
   };
 
   const openCreateDialog = () => {
@@ -2067,17 +2073,38 @@ export default function BillingPage() {
                   <Label htmlFor="inv-no" className="text-xs font-medium">
                     Invoice Number <span className="text-destructive">*</span>
                   </Label>
-                  <Input
-                    id="inv-no"
-                    placeholder="INV-2024-001"
-                    value={form.invoiceNumber}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, invoiceNumber: e.target.value }))
-                    }
-                    required
-                    className="text-xs font-mono bg-card"
-                    data-ocid="billing.invoice_number.input"
-                  />
+                  <div className="flex gap-1">
+                    <Input
+                      id="inv-no"
+                      placeholder="INV/2024-03/001"
+                      value={form.invoiceNumber}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          invoiceNumber: e.target.value,
+                        }))
+                      }
+                      required
+                      className="text-xs font-mono bg-card"
+                      data-ocid="billing.invoice_number.input"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setForm((p) => ({
+                          ...p,
+                          invoiceNumber: nextInvoiceNumber(),
+                        }))
+                      }
+                      className="h-9 px-2 text-xs shrink-0"
+                      title="Auto-generate invoice number"
+                      data-ocid="billing.auto_invoice.button"
+                    >
+                      Auto
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="inv-date" className="text-xs font-medium">

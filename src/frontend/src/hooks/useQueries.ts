@@ -863,9 +863,30 @@ export function useDeleteConsigner() {
         "jt_consigners",
         items.filter((i) => i.id !== id),
       );
+      // Cascade: remove DOs linked to this consigner
+      const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+      const removedDOs = dos.filter((d) => bigIntEq(d.consignerId ?? 0n, id));
+      saveToStorage(
+        "jt_delivery_orders",
+        dos.filter((d) => !bigIntEq(d.consignerId ?? 0n, id)),
+      );
+      // Cascade: remove loading trips linked to removed DOs or directly to consigner
+      const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const removedDOIds = removedDOs.map((d) => d.id);
+      saveToStorage(
+        "jt_loading_trips",
+        trips.filter(
+          (t) =>
+            !removedDOIds.some((did) => bigIntEq(did, t.doId)) &&
+            !bigIntEq(t.consignerId ?? 0n, id),
+        ),
+      );
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["consigners"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["consigners"] });
+      queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
+    },
   });
 }
 
@@ -995,11 +1016,41 @@ export function useDeleteDeliveryOrder() {
       const items = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
       saveToStorage(
         "jt_delivery_orders",
-        items.filter((i) => i.id !== id),
+        items.filter((i) => !bigIntEq(i.id, id)),
       );
+      // Cascade: remove loading trips linked to this DO
+      const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const removedTrips = trips.filter((t) => bigIntEq(t.doId, id));
+      saveToStorage(
+        "jt_loading_trips",
+        trips.filter((t) => !bigIntEq(t.doId, id)),
+      );
+      // Cascade: for each removed trip, clean up unloadings, diesel, petty cash
+      for (const trip of removedTrips) {
+        const unloadings = loadFromStorage<Unloading>("jt_unloadings");
+        saveToStorage(
+          "jt_unloadings",
+          unloadings.filter((u) => !bigIntEq(u.loadingTripId, trip.id)),
+        );
+        const diesel = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+        saveToStorage(
+          "jt_local_diesel",
+          diesel.filter((d) => !(d.remark ?? "").includes(trip.challanNo)),
+        );
+        const petty = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
+        saveToStorage(
+          "jt_pettycash_ledger",
+          petty.filter((p) => !(p.narration ?? "").includes(trip.challanNo)),
+        );
+      }
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
+      queryClient.invalidateQueries({ queryKey: ["unloadings"] });
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] });
+      queryClient.invalidateQueries({ queryKey: ["pettycash_ledger"] });
+    },
   });
 }
 
@@ -1047,10 +1098,19 @@ export function useDeleteVehicle() {
       const items = loadFromStorage<Vehicle>("jt_vehicles");
       saveToStorage(
         "jt_vehicles",
-        items.filter((i) => i.id !== id),
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+      // Cascade: remove diesel entries linked to this vehicle
+      const diesel = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      saveToStorage(
+        "jt_local_diesel",
+        diesel.filter((d) => !bigIntEq(d.truckId, id)),
       );
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vehicles"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] });
+    },
   });
 }
 
@@ -1180,11 +1240,45 @@ export function useDeleteLoadingTrip() {
         "jt_loading_trips",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
+      if (trip) {
+        // Cascade: remove unloadings linked to this trip
+        const unloadings = loadFromStorage<Unloading>("jt_unloadings");
+        const removedUnloadings = unloadings.filter((u) =>
+          bigIntEq(u.loadingTripId, id),
+        );
+        saveToStorage(
+          "jt_unloadings",
+          unloadings.filter((u) => !bigIntEq(u.loadingTripId, id)),
+        );
+        // Cascade: remove payables linked to removed unloadings
+        for (const u of removedUnloadings) {
+          const payables = loadFromStorage<Payable>("jt_payables");
+          saveToStorage(
+            "jt_payables",
+            payables.filter((p) => !bigIntEq(p.unloadingId, u.id)),
+          );
+        }
+        // Cascade: remove diesel entries and petty cash entries by challan no
+        const diesel = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+        saveToStorage(
+          "jt_local_diesel",
+          diesel.filter((d) => !(d.remark ?? "").includes(trip.challanNo)),
+        );
+        const petty = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
+        saveToStorage(
+          "jt_pettycash_ledger",
+          petty.filter((p) => !(p.narration ?? "").includes(trip.challanNo)),
+        );
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
       queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
       queryClient.refetchQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.invalidateQueries({ queryKey: ["unloadings"] });
+      queryClient.invalidateQueries({ queryKey: ["payables"] });
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] });
+      queryClient.invalidateQueries({ queryKey: ["pettycash_ledger"] });
     },
   });
 }
@@ -1214,11 +1308,60 @@ export function useCreateUnloading() {
           t.id === data.loadingTripId ? { ...t, status: "unloaded" } : t,
         ),
       );
+      // Auto-create payable entry if not already present
+      if (newItem.netPayableToVehicle > 0) {
+        const trip = trips.find((t) => bigIntEq(t.id, data.loadingTripId));
+        if (trip) {
+          const vehicles = loadFromStorage<Vehicle>("jt_vehicles");
+          const vehicle = vehicles.find((v) => bigIntEq(v.id, trip.vehicleId));
+          const vehicleNumber =
+            vehicle?.vehicleNumber ?? trip.vehicleId.toString();
+          const ownerName = vehicle?.ownerName ?? "";
+          const payables = loadFromStorage<Payable>("jt_payables");
+          const existingPayable = payables.find((p) =>
+            bigIntEq(p.unloadingId, newItem.id),
+          );
+          if (!existingPayable) {
+            const newPayable: Payable = {
+              id: nextId(payables),
+              unloadingId: newItem.id,
+              loadingTripId: trip.id,
+              date: newItem.unloadingDate,
+              vehicleNumber,
+              ownerName,
+              tripReference: trip.challanNo,
+              loadingDate: trip.loadingDate,
+              loadingQty: trip.loadingQty,
+              unloadingQty: newItem.unloadingQty,
+              bookingAmount: newItem.vehicleCost,
+              shortageDeduction: newItem.shortageAmount,
+              gpsDeduction: newItem.gpsDeduction,
+              challanDeduction: newItem.challanDeduction,
+              tollCharges: newItem.tollCharges,
+              advanceDeduction:
+                (trip.advanceCash ?? 0) + (trip.advanceBank ?? 0),
+              hsdDeduction: trip.hsdAmount ?? 0,
+              cashTdsDeduction: newItem.cashTds,
+              penaltyDeduction: newItem.penalty,
+              totalPayable: newItem.netPayableToVehicle,
+              amountPaid: 0,
+              balance: newItem.netPayableToVehicle,
+              paymentDate: "",
+              paymentMode: "",
+              referenceNumber: "",
+              remarks: "",
+              status: "pending",
+            };
+            saveToStorage("jt_payables", [...payables, newPayable]);
+          }
+        }
+      }
       return newItem.id;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["unloadings"] });
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
+      queryClient.invalidateQueries({ queryKey: ["payables"] });
     },
   });
 }
@@ -1243,13 +1386,35 @@ export function useDeleteUnloading() {
   return useMutation({
     mutationFn: async (id: bigint) => {
       const items = loadFromStorage<Unloading>("jt_unloadings");
+      const unloading = items.find((i) => bigIntEq(i.id, id));
       saveToStorage(
         "jt_unloadings",
-        items.filter((i) => i.id !== id),
+        items.filter((i) => !bigIntEq(i.id, id)),
       );
+      if (unloading) {
+        // Reset the matching loading trip status back to "loaded"
+        const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
+        saveToStorage(
+          "jt_loading_trips",
+          trips.map((t) =>
+            bigIntEq(t.id, unloading.loadingTripId)
+              ? { ...t, status: "loaded" }
+              : t,
+          ),
+        );
+        // Remove matching payable
+        const payables = loadFromStorage<Payable>("jt_payables");
+        saveToStorage(
+          "jt_payables",
+          payables.filter((p) => !bigIntEq(p.unloadingId, id)),
+        );
+      }
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["unloadings"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["unloadings"] });
+      queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
+      queryClient.invalidateQueries({ queryKey: ["payables"] });
+    },
   });
 }
 
@@ -1922,9 +2087,17 @@ export function useDeleteBillingInvoice() {
         "jt_billing_invoices",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
+      // Cascade: remove matching receivable
+      const receivables = loadFromStorage<Receivable>("jt_receivables");
+      saveToStorage(
+        "jt_receivables",
+        receivables.filter((r) => !bigIntEq(r.billingInvoiceId, id)),
+      );
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["billingInvoices"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["billingInvoices"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables"] });
+    },
   });
 }
 
