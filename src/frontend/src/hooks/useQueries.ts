@@ -1486,6 +1486,18 @@ export function useDeleteLocalDieselEntry() {
 }
 
 // =================== RECEIVABLE (LOCAL STATE) ===================
+export interface ReceivablePayment {
+  id: string;
+  date: string;
+  amount: number;
+  tdsDeducted: number;
+  penalty: number;
+  reference: string;
+  mode: string;
+  remarks: string;
+  createdAt: string;
+}
+
 export interface Receivable {
   id: bigint;
   billingInvoiceId: bigint; // 0n if manually created
@@ -1506,6 +1518,7 @@ export interface Receivable {
   referenceNumber: string;
   remarks: string;
   status: string; // pending | partial | paid
+  payments?: ReceivablePayment[];
 }
 
 function calcReceivableStatus(
@@ -1663,7 +1676,62 @@ export function useDeleteReceivable() {
   });
 }
 
+export function useAddReceivablePayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payment,
+    }: {
+      id: bigint;
+      payment: ReceivablePayment;
+    }) => {
+      const items = loadFromStorage<Receivable>("jt_receivables");
+      const idx = items.findIndex((i) => bigIntEq(i.id, id));
+      if (idx < 0) throw new Error("Receivable not found");
+      const rec = items[idx];
+      const existingPayments = rec.payments ?? [];
+      const newPayments = [...existingPayments, payment];
+      const newAmountReceived = newPayments.reduce((s, p) => s + p.amount, 0);
+      const newTDS = newPayments.reduce((s, p) => s + (p.tdsDeducted ?? 0), 0);
+      const newPenalty = newPayments.reduce((s, p) => s + (p.penalty ?? 0), 0);
+      const { balance, status } = calcReceivableStatus(
+        rec.invoiceAmount,
+        newAmountReceived,
+        newTDS,
+        newPenalty,
+      );
+      const updated: Receivable = {
+        ...rec,
+        payments: newPayments,
+        amountReceived: newAmountReceived,
+        tdsDeduction: newTDS,
+        penaltyAmount: newPenalty,
+        paymentDate: payment.date,
+        paymentMode: payment.mode,
+        referenceNumber: payment.reference,
+        balance,
+        status,
+      };
+      items[idx] = updated;
+      saveToStorage("jt_receivables", items);
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["receivables"] }),
+  });
+}
+
 // =================== PAYABLE (LOCAL STATE) ===================
+export interface PayablePayment {
+  id: string;
+  date: string;
+  amount: number;
+  mode: string;
+  utr: string;
+  remarks: string;
+  createdAt: string;
+}
+
 export interface Payable {
   id: bigint;
   unloadingId: bigint; // 0n if manually created
@@ -1692,6 +1760,7 @@ export interface Payable {
   referenceNumber: string;
   remarks: string;
   status: string; // pending | payment_requested | partial | paid
+  payments?: PayablePayment[];
 }
 
 function calcPayableStatus(
@@ -1831,6 +1900,48 @@ export function useDeletePayable() {
         "jt_payables",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
+  });
+}
+
+export function useAddPayablePayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payment,
+    }: {
+      id: bigint;
+      payment: PayablePayment;
+    }) => {
+      const items = loadFromStorage<Payable>("jt_payables");
+      const idx = items.findIndex((i) => bigIntEq(i.id, id));
+      if (idx < 0) throw new Error("Payable not found");
+      const rec = items[idx];
+      const existingPayments = rec.payments ?? [];
+      const newPayments = [...existingPayments, payment];
+      const newAmountPaid = newPayments.reduce((s, p) => s + p.amount, 0);
+      const { balance, status: autoStatus } = calcPayableStatus(
+        rec.totalPayable,
+        newAmountPaid,
+      );
+      const status =
+        autoStatus === "pending" && rec.status === "payment_requested"
+          ? "payment_requested"
+          : autoStatus;
+      const updated: Payable = {
+        ...rec,
+        payments: newPayments,
+        amountPaid: newAmountPaid,
+        paymentDate: payment.date,
+        paymentMode: payment.mode,
+        referenceNumber: payment.utr,
+        balance,
+        status,
+      };
+      items[idx] = updated;
+      saveToStorage("jt_payables", items);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
   });
@@ -2104,15 +2215,24 @@ export function useDeleteBillingInvoice() {
 // =================== TDS RECORD (LOCAL STATE) ===================
 export interface TDSRecord {
   id: bigint;
+  tdsType?: string; // advance_cash | vehicle_payment | tds_receivable
   ownerName: string;
   ownerPAN: string;
   vehicleNo: string;
   tripId: bigint;
+  challanNo?: string;
   advanceAmount: number;
+  tdsRate?: number;
   tdsAmount: number;
   entryDate: string;
   remarks: string;
   status: string; // pending | paid
+  // Extra fields for tds_receivable type
+  invoiceNo?: string;
+  billAmount?: number;
+  referenceNo?: string;
+  // Extra fields for vehicle_payment type
+  utrReference?: string;
 }
 
 export function useGetAllTDSRecords() {

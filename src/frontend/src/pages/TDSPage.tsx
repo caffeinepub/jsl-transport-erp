@@ -34,172 +34,337 @@ import {
   type TDSRecord,
   useCreateTDSRecord,
   useDeleteTDSRecord,
-  useGetAllLoadingTrips,
   useGetAllTDSRecords,
-  useGetAllVehicles,
   useUpdateTDSRecord,
 } from "../hooks/useQueries";
 import { formatCurrency, formatDate } from "../utils/format";
 
-interface TDSFormData {
+const TODAY = new Date().toISOString().slice(0, 10);
+
+// ─── Advance Cash Form ─────────────────────────────────────────────────────
+interface AdvanceCashForm {
+  entryDate: string;
+  vehicleNo: string;
+  challanNo: string;
+  ownerPAN: string;
+  advanceAmount: string;
+  tdsRate: string;
+  tdsAmount: string;
+  remarks: string;
+}
+const defaultAdvanceForm: AdvanceCashForm = {
+  entryDate: TODAY,
+  vehicleNo: "",
+  challanNo: "",
+  ownerPAN: "",
+  advanceAmount: "",
+  tdsRate: "2",
+  tdsAmount: "",
+  remarks: "",
+};
+
+// ─── Vehicle Payment Form ───────────────────────────────────────────────────
+interface VehiclePaymentForm {
+  entryDate: string;
+  vehicleNo: string;
+  challanNo: string;
+  ownerPAN: string;
+  advanceAmount: string;
+  tdsRate: string;
+  tdsAmount: string;
+  utrReference: string;
+  remarks: string;
+}
+const defaultVehiclePaymentForm: VehiclePaymentForm = {
+  entryDate: TODAY,
+  vehicleNo: "",
+  challanNo: "",
+  ownerPAN: "",
+  advanceAmount: "",
+  tdsRate: "2",
+  tdsAmount: "",
+  utrReference: "",
+  remarks: "",
+};
+
+// ─── TDS Receivable Form ────────────────────────────────────────────────────
+interface TDSReceivableForm {
+  entryDate: string;
+  invoiceNo: string;
   ownerName: string;
   ownerPAN: string;
-  vehicleNo: string;
-  tripId: string;
-  advanceAmount: string;
-  entryDate: string;
+  billAmount: string;
+  tdsRate: string;
+  tdsAmount: string;
+  referenceNo: string;
   remarks: string;
-  status: string;
 }
-
-const defaultForm: TDSFormData = {
+const defaultReceivableForm: TDSReceivableForm = {
+  entryDate: TODAY,
+  invoiceNo: "",
   ownerName: "",
   ownerPAN: "",
-  vehicleNo: "",
-  tripId: "0",
-  advanceAmount: "",
-  entryDate: new Date().toISOString().slice(0, 10),
+  billAmount: "",
+  tdsRate: "2",
+  tdsAmount: "",
+  referenceNo: "",
   remarks: "",
-  status: "pending",
 };
+
+function autoCalcTDS(amount: string, rate: string): string {
+  const a = Number(amount || 0);
+  const r = Number(rate || 0);
+  if (a <= 0 || r <= 0) return "";
+  return ((a * r) / 100).toFixed(2);
+}
 
 export default function TDSPage() {
   const tdsQuery = useGetAllTDSRecords();
-  const tripsQuery = useGetAllLoadingTrips();
-  const vehiclesQuery = useGetAllVehicles();
   const createTDS = useCreateTDSRecord();
   const updateTDS = useUpdateTDSRecord();
   const deleteTDS = useDeleteTDSRecord();
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<TDSRecord | null>(null);
-  const [form, setForm] = useState<TDSFormData>(defaultForm);
+  const [activeTab, setActiveTab] = useState("advance_cash");
+
+  // Advance Cash dialog
+  const [acDialog, setAcDialog] = useState(false);
+  const [acEditing, setAcEditing] = useState<TDSRecord | null>(null);
+  const [acForm, setAcForm] = useState<AdvanceCashForm>(defaultAdvanceForm);
+
+  // Vehicle Payment dialog
+  const [vpDialog, setVpDialog] = useState(false);
+  const [vpEditing, setVpEditing] = useState<TDSRecord | null>(null);
+  const [vpForm, setVpForm] = useState<VehiclePaymentForm>(
+    defaultVehiclePaymentForm,
+  );
+
+  // TDS Receivable dialog
+  const [trDialog, setTrDialog] = useState(false);
+  const [trEditing, setTrEditing] = useState<TDSRecord | null>(null);
+  const [trForm, setTrForm] = useState<TDSReceivableForm>(
+    defaultReceivableForm,
+  );
+
+  // Delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<TDSRecord | null>(null);
 
-  const records = tdsQuery.data ?? [];
-  const trips = tripsQuery.data ?? [];
-  const vehicles = vehiclesQuery.data ?? [];
+  const allRecords = tdsQuery.data ?? [];
+
+  const advanceCashRecords = allRecords.filter(
+    (r) => !r.tdsType || r.tdsType === "advance_cash",
+  );
+  const vehiclePaymentRecords = allRecords.filter(
+    (r) => r.tdsType === "vehicle_payment",
+  );
+  const tdsReceivableRecords = allRecords.filter(
+    (r) => r.tdsType === "tds_receivable",
+  );
 
   const summary = useMemo(() => {
-    const totalAdvance = records.reduce(
-      (s, r) => s + Number(r.advanceAmount),
+    const acTotal = advanceCashRecords.reduce(
+      (s, r) => s + (r.tdsAmount ?? 0),
       0,
     );
-    const totalTDS = records.reduce((s, r) => s + Number(r.tdsAmount), 0);
-    const paidTDS = records
-      .filter((r) => r.status === "paid")
-      .reduce((s, r) => s + Number(r.tdsAmount), 0);
-    return { totalAdvance, totalTDS, pendingTDS: totalTDS - paidTDS };
-  }, [records]);
+    const vpTotal = vehiclePaymentRecords.reduce(
+      (s, r) => s + (r.tdsAmount ?? 0),
+      0,
+    );
+    const trTotal = tdsReceivableRecords.reduce(
+      (s, r) => s + (r.tdsAmount ?? 0),
+      0,
+    );
+    return { acTotal, vpTotal, trTotal, grand: acTotal + vpTotal + trTotal };
+  }, [advanceCashRecords, vehiclePaymentRecords, tdsReceivableRecords]);
 
-  const monthlyData = useMemo(() => {
-    const map: Record<string, { month: string; advance: number; tds: number }> =
-      {};
-    for (const r of records) {
+  // PAN-wise summary
+  const panSummary = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of allRecords) {
+      const pan = r.ownerPAN || "N/A";
+      map[pan] = (map[pan] ?? 0) + (r.tdsAmount ?? 0);
+    }
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [allRecords]);
+
+  // Month-wise summary
+  const monthSummary = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of allRecords) {
       if (!r.entryDate) continue;
-      const d = new Date(r.entryDate);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleDateString("en-IN", {
-        month: "short",
-        year: "numeric",
+      const month = r.entryDate.slice(0, 7);
+      map[month] = (map[month] ?? 0) + (r.tdsAmount ?? 0);
+    }
+    return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [allRecords]);
+
+  // ─── Advance Cash Handlers ──────────────────────────────────────────────
+  const openAcDialog = (record?: TDSRecord) => {
+    if (record) {
+      setAcEditing(record);
+      setAcForm({
+        entryDate: record.entryDate,
+        vehicleNo: record.vehicleNo,
+        challanNo: record.challanNo ?? "",
+        ownerPAN: record.ownerPAN,
+        advanceAmount: record.advanceAmount.toString(),
+        tdsRate: (record.tdsRate ?? 2).toString(),
+        tdsAmount: record.tdsAmount.toString(),
+        remarks: record.remarks,
       });
-      if (!map[key]) map[key] = { month: label, advance: 0, tds: 0 };
-      map[key].advance += Number(r.advanceAmount);
-      map[key].tds += Number(r.tdsAmount);
+    } else {
+      setAcEditing(null);
+      setAcForm(defaultAdvanceForm);
     }
-    return Object.values(map).sort((a, b) => a.month.localeCompare(b.month));
-  }, [records]);
-
-  const panData = useMemo(() => {
-    const map: Record<
-      string,
-      {
-        pan: string;
-        owner: string;
-        trips: number;
-        advance: number;
-        tds: number;
-      }
-    > = {};
-    for (const r of records) {
-      const key = r.ownerPAN || "NO-PAN";
-      if (!map[key])
-        map[key] = {
-          pan: key,
-          owner: r.ownerName,
-          trips: 0,
-          advance: 0,
-          tds: 0,
-        };
-      map[key].trips += 1;
-      map[key].advance += Number(r.advanceAmount);
-      map[key].tds += Number(r.tdsAmount);
-    }
-    return Object.values(map);
-  }, [records]);
-
-  const openCreateDialog = () => {
-    setEditingItem(null);
-    setForm(defaultForm);
-    setDialogOpen(true);
+    setAcDialog(true);
   };
 
-  const openEditDialog = (item: TDSRecord) => {
-    setEditingItem(item);
-    setForm({
-      ownerName: item.ownerName,
-      ownerPAN: item.ownerPAN,
-      vehicleNo: item.vehicleNo,
-      tripId: item.tripId.toString(),
-      advanceAmount: item.advanceAmount.toString(),
-      entryDate: item.entryDate,
-      remarks: item.remarks,
-      status: item.status,
-    });
-    setDialogOpen(true);
-  };
-
-  const tdsAmount = Number(form.advanceAmount) * 0.02;
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleAcSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.ownerName || !form.advanceAmount) {
-      toast.error("Owner name and advance amount are required");
-      return;
-    }
     const data: Omit<TDSRecord, "id"> = {
-      ownerName: form.ownerName.trim(),
-      ownerPAN: form.ownerPAN.trim().toUpperCase(),
-      vehicleNo: form.vehicleNo.trim().toUpperCase(),
-      tripId: form.tripId && form.tripId !== "0" ? BigInt(form.tripId) : 0n,
-      advanceAmount: Number(form.advanceAmount),
-      tdsAmount,
-      entryDate: form.entryDate,
-      remarks: form.remarks.trim(),
-      status: form.status,
+      tdsType: "advance_cash",
+      entryDate: acForm.entryDate,
+      vehicleNo: acForm.vehicleNo,
+      challanNo: acForm.challanNo,
+      ownerName: acForm.vehicleNo,
+      ownerPAN: acForm.ownerPAN,
+      advanceAmount: Number(acForm.advanceAmount || 0),
+      tdsRate: Number(acForm.tdsRate || 0),
+      tdsAmount: Number(acForm.tdsAmount || 0),
+      remarks: acForm.remarks,
+      status: "pending",
+      tripId: 0n,
     };
     try {
-      if (editingItem) {
-        await updateTDS.mutateAsync({ id: editingItem.id, ...data });
-        toast.success("TDS record updated");
+      if (acEditing) {
+        await updateTDS.mutateAsync({ ...data, id: acEditing.id });
+        toast.success("TDS entry updated");
       } else {
         await createTDS.mutateAsync(data);
-        toast.success("TDS entry created");
+        toast.success("TDS entry added");
       }
-      setDialogOpen(false);
+      setAcDialog(false);
     } catch {
-      toast.error("Failed to save TDS record.");
+      toast.error("Failed to save TDS entry");
     }
   };
 
+  // ─── Vehicle Payment Handlers ───────────────────────────────────────────
+  const openVpDialog = (record?: TDSRecord) => {
+    if (record) {
+      setVpEditing(record);
+      setVpForm({
+        entryDate: record.entryDate,
+        vehicleNo: record.vehicleNo,
+        challanNo: record.challanNo ?? "",
+        ownerPAN: record.ownerPAN,
+        advanceAmount: record.advanceAmount.toString(),
+        tdsRate: (record.tdsRate ?? 2).toString(),
+        tdsAmount: record.tdsAmount.toString(),
+        utrReference: record.utrReference ?? "",
+        remarks: record.remarks,
+      });
+    } else {
+      setVpEditing(null);
+      setVpForm(defaultVehiclePaymentForm);
+    }
+    setVpDialog(true);
+  };
+
+  const handleVpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const data: Omit<TDSRecord, "id"> = {
+      tdsType: "vehicle_payment",
+      entryDate: vpForm.entryDate,
+      vehicleNo: vpForm.vehicleNo,
+      challanNo: vpForm.challanNo,
+      ownerName: vpForm.vehicleNo,
+      ownerPAN: vpForm.ownerPAN,
+      advanceAmount: Number(vpForm.advanceAmount || 0),
+      tdsRate: Number(vpForm.tdsRate || 0),
+      tdsAmount: Number(vpForm.tdsAmount || 0),
+      utrReference: vpForm.utrReference,
+      remarks: vpForm.remarks,
+      status: "pending",
+      tripId: 0n,
+    };
+    try {
+      if (vpEditing) {
+        await updateTDS.mutateAsync({ ...data, id: vpEditing.id });
+        toast.success("TDS entry updated");
+      } else {
+        await createTDS.mutateAsync(data);
+        toast.success("TDS entry added");
+      }
+      setVpDialog(false);
+    } catch {
+      toast.error("Failed to save TDS entry");
+    }
+  };
+
+  // ─── TDS Receivable Handlers ────────────────────────────────────────────
+  const openTrDialog = (record?: TDSRecord) => {
+    if (record) {
+      setTrEditing(record);
+      setTrForm({
+        entryDate: record.entryDate,
+        invoiceNo: record.invoiceNo ?? "",
+        ownerName: record.ownerName,
+        ownerPAN: record.ownerPAN,
+        billAmount: (record.billAmount ?? record.advanceAmount).toString(),
+        tdsRate: (record.tdsRate ?? 2).toString(),
+        tdsAmount: record.tdsAmount.toString(),
+        referenceNo: record.referenceNo ?? "",
+        remarks: record.remarks,
+      });
+    } else {
+      setTrEditing(null);
+      setTrForm(defaultReceivableForm);
+    }
+    setTrDialog(true);
+  };
+
+  const handleTrSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const billAmt = Number(trForm.billAmount || 0);
+    const data: Omit<TDSRecord, "id"> = {
+      tdsType: "tds_receivable",
+      entryDate: trForm.entryDate,
+      vehicleNo: "",
+      invoiceNo: trForm.invoiceNo,
+      ownerName: trForm.ownerName,
+      ownerPAN: trForm.ownerPAN,
+      billAmount: billAmt,
+      advanceAmount: billAmt,
+      tdsRate: Number(trForm.tdsRate || 0),
+      tdsAmount: Number(trForm.tdsAmount || 0),
+      referenceNo: trForm.referenceNo,
+      remarks: trForm.remarks,
+      status: "pending",
+      tripId: 0n,
+    };
+    try {
+      if (trEditing) {
+        await updateTDS.mutateAsync({ ...data, id: trEditing.id });
+        toast.success("TDS receivable entry updated");
+      } else {
+        await createTDS.mutateAsync(data);
+        toast.success("TDS receivable entry added");
+      }
+      setTrDialog(false);
+    } catch {
+      toast.error("Failed to save TDS entry");
+    }
+  };
+
+  // ─── Delete Handlers ────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!deleteConfirm) return;
     try {
       await deleteTDS.mutateAsync(deleteConfirm.id);
-      toast.success("TDS record deleted");
+      toast.success("TDS entry deleted");
       setDeleteConfirm(null);
     } catch {
-      toast.error("Failed to delete TDS record.");
+      toast.error("Failed to delete");
     }
   };
 
@@ -207,139 +372,172 @@ export default function TDSPage() {
 
   return (
     <div className="p-6 space-y-5" data-ocid="tds.page">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-lg"
-            style={{ background: "oklch(0.55 0.18 240 / 0.12)" }}
-          >
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="flex items-center gap-2">
             <Receipt
-              className="h-4 w-4"
-              style={{ color: "oklch(0.55 0.18 240)" }}
+              className="h-5 w-5"
+              style={{ color: "oklch(0.55 0.18 60)" }}
             />
-          </div>
-          <div>
             <h2 className="text-lg font-bold font-display text-foreground">
               TDS Management
             </h2>
-            <p className="text-sm text-muted-foreground">
-              {records.length} record{records.length !== 1 ? "s" : ""}
-            </p>
           </div>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Track TDS on advance cash, vehicle payments, and receivables from
+            consigners
+          </p>
         </div>
-        <Button
-          onClick={openCreateDialog}
-          className="gap-2"
-          data-ocid="tds.add_button"
-        >
-          <Plus className="h-4 w-4" />
-          Add TDS Entry
-        </Button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Card className="border border-border">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">
-              Total Cash Advance
+              TDS on Advance
             </p>
-            <p className="text-xl font-bold font-display mt-1">
-              {formatCurrency(summary.totalAdvance)}
+            <p
+              className="mt-1 text-xl font-bold font-display"
+              style={{ color: "oklch(0.55 0.18 60)" }}
+            >
+              {formatCurrency(summary.acTotal)}
             </p>
           </CardContent>
         </Card>
         <Card className="border border-border">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">
-              Total TDS Due (2%)
+              TDS on Payment
             </p>
-            <p className="text-xl font-bold font-display mt-1 text-amber-600">
-              {formatCurrency(summary.totalTDS)}
+            <p
+              className="mt-1 text-xl font-bold font-display"
+              style={{ color: "oklch(0.45 0.2 27)" }}
+            >
+              {formatCurrency(summary.vpTotal)}
             </p>
           </CardContent>
         </Card>
         <Card className="border border-border">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">
-              Pending TDS
+              TDS Receivable
             </p>
-            <p className="text-xl font-bold font-display mt-1 text-red-600">
-              {formatCurrency(summary.pendingTDS)}
+            <p
+              className="mt-1 text-xl font-bold font-display"
+              style={{ color: "oklch(0.4 0.16 150)" }}
+            >
+              {formatCurrency(summary.trTotal)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border border-border">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">
+              Grand Total TDS
+            </p>
+            <p className="mt-1 text-xl font-bold font-display text-foreground">
+              {formatCurrency(summary.grand)}
             </p>
           </CardContent>
         </Card>
       </div>
 
-      <Tabs defaultValue="entries">
-        <TabsList>
+      {/* Main Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="h-9">
           <TabsTrigger
-            value="entries"
+            value="advance_cash"
             className="text-xs"
-            data-ocid="tds.entries.tab"
+            data-ocid="tds.advance_cash.tab"
           >
-            All Entries
+            TDS on Advance Cash ({advanceCashRecords.length})
           </TabsTrigger>
           <TabsTrigger
-            value="monthly"
+            value="vehicle_payment"
             className="text-xs"
-            data-ocid="tds.monthly.tab"
+            data-ocid="tds.vehicle_payment.tab"
           >
-            Monthly Summary
+            TDS at Vehicle Payment ({vehiclePaymentRecords.length})
           </TabsTrigger>
-          <TabsTrigger value="pan" className="text-xs" data-ocid="tds.pan.tab">
-            PAN-wise Summary
+          <TabsTrigger
+            value="tds_receivable"
+            className="text-xs"
+            data-ocid="tds.tds_receivable.tab"
+          >
+            TDS Receivable ({tdsReceivableRecords.length})
+          </TabsTrigger>
+          <TabsTrigger
+            value="summary"
+            className="text-xs"
+            data-ocid="tds.summary.tab"
+          >
+            Summary
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="entries">
-          <div className="rounded-lg border border-border bg-card overflow-hidden mt-4">
+        {/* ─── Advance Cash Tab ─────────────────────────────────────────── */}
+        <TabsContent value="advance_cash" className="space-y-4 mt-4">
+          <div className="flex justify-between items-center">
+            <p className="text-sm font-medium text-foreground">
+              TDS deducted at the time of cash advance to vehicle
+            </p>
+            <Button
+              size="sm"
+              onClick={() => openAcDialog()}
+              className="gap-2 text-xs"
+              data-ocid="tds.advance_cash.open_modal_button"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Entry
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
             {tdsQuery.isLoading ? (
-              <div className="p-6 space-y-3">
+              <div className="p-6 space-y-3" data-ocid="tds.loading_state">
                 {[1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-10 w-full" />
                 ))}
               </div>
-            ) : records.length === 0 ? (
+            ) : advanceCashRecords.length === 0 ? (
               <div
-                className="flex flex-col items-center justify-center py-16 text-center"
-                data-ocid="tds.empty_state"
+                className="flex flex-col items-center justify-center py-16"
+                data-ocid="tds.advance_cash.empty_state"
               >
-                <Receipt className="h-8 w-8 text-muted-foreground/40 mb-3" />
-                <p className="text-sm font-medium text-muted-foreground">
-                  No TDS entries yet
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Add entries for cash advances paid to vehicle owners
+                <Receipt className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  No advance cash TDS entries
                 </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <Table data-ocid="tds.table">
+                <Table data-ocid="tds.advance_cash.table">
                   <TableHeader>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
                       <TableHead className="text-xs font-semibold">
                         Date
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
-                        Vehicle
+                        Vehicle No
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
-                        Owner
+                        Challan No
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
-                        PAN
-                      </TableHead>
-                      <TableHead className="text-xs font-semibold">
-                        Trip
+                        PAN No
                       </TableHead>
                       <TableHead className="text-xs font-semibold text-right">
-                        Cash Advance
+                        Advance Amt
                       </TableHead>
                       <TableHead className="text-xs font-semibold text-right">
-                        TDS (2%)
+                        TDS Rate %
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        TDS Amount
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
-                        Status
+                        Remarks
                       </TableHead>
                       <TableHead className="text-xs font-semibold text-right">
                         Actions
@@ -347,77 +545,62 @@ export default function TDSPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {records.map((item, index) => {
-                      const trip = trips.find(
-                        (t) =>
-                          t.id === item.tripId ||
-                          Number(t.id) === Number(item.tripId),
-                      );
-                      return (
-                        <TableRow
-                          key={item.id.toString()}
-                          className="table-row-hover"
-                          data-ocid={`tds.item.${index + 1}`}
+                    {advanceCashRecords.map((record, index) => (
+                      <TableRow
+                        key={record.id.toString()}
+                        data-ocid={`tds.advance_cash.item.${index + 1}`}
+                      >
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDate(record.entryDate)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono font-medium">
+                          {record.vehicleNo || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {record.challanNo || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {record.ownerPAN || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right">
+                          {formatCurrency(record.advanceAmount)}
+                        </TableCell>
+                        <TableCell className="text-xs text-right text-muted-foreground">
+                          {record.tdsRate ? `${record.tdsRate}%` : "-"}
+                        </TableCell>
+                        <TableCell
+                          className="text-xs text-right font-semibold"
+                          style={{ color: "oklch(0.55 0.18 60)" }}
                         >
-                          <TableCell className="text-xs text-muted-foreground">
-                            {formatDate(item.entryDate)}
-                          </TableCell>
-                          <TableCell className="text-xs font-mono font-medium">
-                            {item.vehicleNo || "—"}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {item.ownerName}
-                          </TableCell>
-                          <TableCell className="text-xs font-mono">
-                            {item.ownerPAN || "—"}
-                          </TableCell>
-                          <TableCell className="text-xs font-mono">
-                            {trip?.tripId ??
-                              (item.tripId !== 0n
-                                ? item.tripId.toString()
-                                : "—")}
-                          </TableCell>
-                          <TableCell className="text-xs text-right">
-                            {formatCurrency(item.advanceAmount)}
-                          </TableCell>
-                          <TableCell className="text-xs text-right font-semibold text-amber-600">
-                            {formatCurrency(item.tdsAmount)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                item.status === "paid" ? "default" : "secondary"
-                              }
-                              className="text-[10px]"
+                          {formatCurrency(record.tdsAmount)}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
+                          {record.remarks || "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openAcDialog(record)}
+                              className="h-7 w-7 p-0"
+                              data-ocid={`tds.advance_cash.edit_button.${index + 1}`}
                             >
-                              {item.status === "paid" ? "Paid" : "Pending"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openEditDialog(item)}
-                                className="h-7 w-7 p-0"
-                                data-ocid={`tds.edit_button.${index + 1}`}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setDeleteConfirm(item)}
-                                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                                data-ocid={`tds.delete_button.${index + 1}`}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDeleteConfirm(record)}
+                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                              data-ocid={`tds.advance_cash.delete_button.${index + 1}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </div>
@@ -425,64 +608,383 @@ export default function TDSPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="monthly">
-          <div className="rounded-lg border border-border bg-card overflow-hidden mt-4">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="text-xs font-semibold">Month</TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Total Cash Advance
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    TDS Amount (2%)
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {monthlyData.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={3}
-                      className="text-center text-xs text-muted-foreground py-10"
-                    >
-                      No data available
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  monthlyData.map((m) => (
-                    <TableRow key={m.month} className="table-row-hover">
-                      <TableCell className="text-xs font-medium">
-                        {m.month}
-                      </TableCell>
-                      <TableCell className="text-xs text-right">
-                        {formatCurrency(m.advance)}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-semibold text-amber-600">
-                        {formatCurrency(m.tds)}
-                      </TableCell>
+        {/* ─── Vehicle Payment Tab ──────────────────────────────────────── */}
+        <TabsContent value="vehicle_payment" className="space-y-4 mt-4">
+          <div className="flex justify-between items-center">
+            <p className="text-sm font-medium text-foreground">
+              TDS deducted at the time of final balance payment to vehicle
+            </p>
+            <Button
+              size="sm"
+              onClick={() => openVpDialog()}
+              className="gap-2 text-xs"
+              data-ocid="tds.vehicle_payment.open_modal_button"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Entry
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            {tdsQuery.isLoading ? (
+              <div className="p-6 space-y-3" data-ocid="tds.vp.loading_state">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : vehiclePaymentRecords.length === 0 ? (
+              <div
+                className="flex flex-col items-center justify-center py-16"
+                data-ocid="tds.vehicle_payment.empty_state"
+              >
+                <Receipt className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  No vehicle payment TDS entries
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table data-ocid="tds.vehicle_payment.table">
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="text-xs font-semibold">
+                        Date
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Vehicle No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Challan No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        PAN No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Payment Amt
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        TDS Rate %
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        TDS Amount
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        UTR/Ref
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Remarks
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Actions
+                      </TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {vehiclePaymentRecords.map((record, index) => (
+                      <TableRow
+                        key={record.id.toString()}
+                        data-ocid={`tds.vehicle_payment.item.${index + 1}`}
+                      >
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDate(record.entryDate)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono font-medium">
+                          {record.vehicleNo || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {record.challanNo || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {record.ownerPAN || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right">
+                          {formatCurrency(record.advanceAmount)}
+                        </TableCell>
+                        <TableCell className="text-xs text-right text-muted-foreground">
+                          {record.tdsRate ? `${record.tdsRate}%` : "-"}
+                        </TableCell>
+                        <TableCell
+                          className="text-xs text-right font-semibold"
+                          style={{ color: "oklch(0.45 0.2 27)" }}
+                        >
+                          {formatCurrency(record.tdsAmount)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono text-muted-foreground">
+                          {record.utrReference || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[100px] truncate">
+                          {record.remarks || "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openVpDialog(record)}
+                              className="h-7 w-7 p-0"
+                              data-ocid={`tds.vehicle_payment.edit_button.${index + 1}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDeleteConfirm(record)}
+                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                              data-ocid={`tds.vehicle_payment.delete_button.${index + 1}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </div>
         </TabsContent>
 
-        <TabsContent value="pan">
-          <div className="rounded-lg border border-border bg-card overflow-hidden mt-4">
+        {/* ─── TDS Receivable Tab ───────────────────────────────────────── */}
+        <TabsContent value="tds_receivable" className="space-y-4 mt-4">
+          <div className="flex justify-between items-center">
+            <p className="text-sm font-medium text-foreground">
+              TDS deducted by clients (e.g., Jindal) on final bill amount
+            </p>
+            <Button
+              size="sm"
+              onClick={() => openTrDialog()}
+              className="gap-2 text-xs"
+              data-ocid="tds.tds_receivable.open_modal_button"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Entry
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            {tdsQuery.isLoading ? (
+              <div className="p-6 space-y-3" data-ocid="tds.tr.loading_state">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : tdsReceivableRecords.length === 0 ? (
+              <div
+                className="flex flex-col items-center justify-center py-16"
+                data-ocid="tds.tds_receivable.empty_state"
+              >
+                <Receipt className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  No TDS receivable entries
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table data-ocid="tds.tds_receivable.table">
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="text-xs font-semibold">
+                        Date
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Invoice No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Consignee
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        PAN No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Bill Amount
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        TDS Rate %
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        TDS Amount
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Reference
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Remarks
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tdsReceivableRecords.map((record, index) => (
+                      <TableRow
+                        key={record.id.toString()}
+                        data-ocid={`tds.tds_receivable.item.${index + 1}`}
+                      >
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDate(record.entryDate)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono font-medium">
+                          {record.invoiceNo || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-medium">
+                          {record.ownerName || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {record.ownerPAN || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right">
+                          {formatCurrency(
+                            record.billAmount ?? record.advanceAmount,
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-right text-muted-foreground">
+                          {record.tdsRate ? `${record.tdsRate}%` : "-"}
+                        </TableCell>
+                        <TableCell
+                          className="text-xs text-right font-semibold"
+                          style={{ color: "oklch(0.4 0.16 150)" }}
+                        >
+                          {formatCurrency(record.tdsAmount)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono text-muted-foreground">
+                          {record.referenceNo || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[100px] truncate">
+                          {record.remarks || "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openTrDialog(record)}
+                              className="h-7 w-7 p-0"
+                              data-ocid={`tds.tds_receivable.edit_button.${index + 1}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDeleteConfirm(record)}
+                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                              data-ocid={`tds.tds_receivable.delete_button.${index + 1}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ─── Summary Tab ──────────────────────────────────────────────── */}
+        <TabsContent value="summary" className="space-y-6 mt-4">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            {/* PAN-wise Summary */}
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <p className="text-sm font-semibold text-foreground">
+                  PAN-wise TDS Summary
+                </p>
+              </div>
+              {panSummary.length === 0 ? (
+                <p className="text-xs text-muted-foreground p-4">No data</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="text-xs font-semibold">
+                        PAN No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Total TDS
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {panSummary.map(([pan, total], i) => (
+                      <TableRow
+                        key={pan}
+                        data-ocid={`tds.pan_summary.item.${i + 1}`}
+                      >
+                        <TableCell className="text-xs font-mono">
+                          {pan}
+                        </TableCell>
+                        <TableCell
+                          className="text-xs text-right font-semibold"
+                          style={{ color: "oklch(0.55 0.18 60)" }}
+                        >
+                          {formatCurrency(total)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+
+            {/* Month-wise Summary */}
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <p className="text-sm font-semibold text-foreground">
+                  Month-wise TDS Summary
+                </p>
+              </div>
+              {monthSummary.length === 0 ? (
+                <p className="text-xs text-muted-foreground p-4">No data</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="text-xs font-semibold">
+                        Month
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Total TDS
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {monthSummary.map(([month, total], i) => (
+                      <TableRow
+                        key={month}
+                        data-ocid={`tds.month_summary.item.${i + 1}`}
+                      >
+                        <TableCell className="text-xs">{month}</TableCell>
+                        <TableCell
+                          className="text-xs text-right font-semibold"
+                          style={{ color: "oklch(0.55 0.18 60)" }}
+                        >
+                          {formatCurrency(total)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          </div>
+
+          {/* Type-wise breakdown */}
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <p className="text-sm font-semibold text-foreground">
+                TDS Type Breakdown
+              </p>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="text-xs font-semibold">PAN</TableHead>
-                  <TableHead className="text-xs font-semibold">
-                    Owner Name
-                  </TableHead>
+                  <TableHead className="text-xs font-semibold">Type</TableHead>
                   <TableHead className="text-xs font-semibold text-right">
-                    Trips
-                  </TableHead>
-                  <TableHead className="text-xs font-semibold text-right">
-                    Total Advance
+                    No. of Entries
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     Total TDS
@@ -490,241 +992,253 @@ export default function TDSPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {panData.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center text-xs text-muted-foreground py-10"
+                <TableRow>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className="text-xs"
+                      style={{
+                        color: "oklch(0.55 0.18 60)",
+                        borderColor: "oklch(0.55 0.18 60)",
+                      }}
                     >
-                      No data available
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  panData.map((p) => (
-                    <TableRow key={p.pan} className="table-row-hover">
-                      <TableCell className="text-xs font-mono font-semibold">
-                        {p.pan}
-                      </TableCell>
-                      <TableCell className="text-xs">{p.owner}</TableCell>
-                      <TableCell className="text-xs text-right">
-                        {p.trips}
-                      </TableCell>
-                      <TableCell className="text-xs text-right">
-                        {formatCurrency(p.advance)}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-semibold text-amber-600">
-                        {formatCurrency(p.tds)}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
+                      TDS on Advance Cash
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-right">
+                    {advanceCashRecords.length}
+                  </TableCell>
+                  <TableCell
+                    className="text-xs text-right font-semibold"
+                    style={{ color: "oklch(0.55 0.18 60)" }}
+                  >
+                    {formatCurrency(summary.acTotal)}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className="text-xs"
+                      style={{
+                        color: "oklch(0.45 0.2 27)",
+                        borderColor: "oklch(0.45 0.2 27)",
+                      }}
+                    >
+                      TDS at Vehicle Payment
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-right">
+                    {vehiclePaymentRecords.length}
+                  </TableCell>
+                  <TableCell
+                    className="text-xs text-right font-semibold"
+                    style={{ color: "oklch(0.45 0.2 27)" }}
+                  >
+                    {formatCurrency(summary.vpTotal)}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className="text-xs"
+                      style={{
+                        color: "oklch(0.4 0.16 150)",
+                        borderColor: "oklch(0.4 0.16 150)",
+                      }}
+                    >
+                      TDS Receivable
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-right">
+                    {tdsReceivableRecords.length}
+                  </TableCell>
+                  <TableCell
+                    className="text-xs text-right font-semibold"
+                    style={{ color: "oklch(0.4 0.16 150)" }}
+                  >
+                    {formatCurrency(summary.trTotal)}
+                  </TableCell>
+                </TableRow>
+                <TableRow className="bg-muted/20 font-bold">
+                  <TableCell className="text-xs font-bold">
+                    Grand Total
+                  </TableCell>
+                  <TableCell className="text-xs text-right font-bold">
+                    {allRecords.length}
+                  </TableCell>
+                  <TableCell className="text-xs text-right font-bold text-foreground">
+                    {formatCurrency(summary.grand)}
+                  </TableCell>
+                </TableRow>
               </TableBody>
             </Table>
           </div>
         </TabsContent>
       </Tabs>
 
-      {/* Add/Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md" data-ocid="tds.dialog">
+      {/* ─── Advance Cash Dialog ─────────────────────────────────────────── */}
+      <Dialog open={acDialog} onOpenChange={setAcDialog}>
+        <DialogContent className="max-w-lg" data-ocid="tds.advance_cash.dialog">
           <DialogHeader>
             <DialogTitle className="font-display">
-              {editingItem ? "Edit TDS Entry" : "Add TDS Entry"}
+              {acEditing ? "Edit" : "Add"} TDS on Advance Cash
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleAcSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="tds-owner" className="text-xs">
-                  Owner Name *
-                </Label>
+                <Label className="text-xs">Date *</Label>
                 <Input
-                  id="tds-owner"
-                  placeholder="Owner name"
-                  value={form.ownerName}
+                  type="date"
+                  value={acForm.entryDate}
                   onChange={(e) =>
-                    setForm((p) => ({ ...p, ownerName: e.target.value }))
+                    setAcForm((p) => ({ ...p, entryDate: e.target.value }))
                   }
-                  required
                   className="text-xs"
-                  data-ocid="tds.owner.input"
+                  data-ocid="tds.ac.date.input"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="tds-pan" className="text-xs">
-                  PAN Number
-                </Label>
+                <Label className="text-xs">Vehicle No *</Label>
                 <Input
-                  id="tds-pan"
-                  placeholder="ABCDE1234F"
-                  value={form.ownerPAN}
+                  placeholder="MH-12-AB-1234"
+                  value={acForm.vehicleNo}
                   onChange={(e) =>
-                    setForm((p) => ({
+                    setAcForm((p) => ({ ...p, vehicleNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.ac.vehicle_no.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Challan No</Label>
+                <Input
+                  placeholder="Challan No"
+                  value={acForm.challanNo}
+                  onChange={(e) =>
+                    setAcForm((p) => ({ ...p, challanNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.ac.challan_no.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">PAN No</Label>
+                <Input
+                  placeholder="AAAAA0000A"
+                  value={acForm.ownerPAN}
+                  onChange={(e) =>
+                    setAcForm((p) => ({
                       ...p,
                       ownerPAN: e.target.value.toUpperCase(),
                     }))
                   }
-                  className="text-xs uppercase"
-                  data-ocid="tds.pan.input"
+                  className="text-xs"
+                  data-ocid="tds.ac.pan.input"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="tds-vehicle" className="text-xs">
-                  Vehicle No
-                </Label>
+                <Label className="text-xs">Advance Amount (₹) *</Label>
                 <Input
-                  id="tds-vehicle"
-                  placeholder="OD03AB6655"
-                  value={form.vehicleNo}
-                  onChange={(e) =>
-                    setForm((p) => ({
-                      ...p,
-                      vehicleNo: e.target.value.toUpperCase(),
-                    }))
-                  }
-                  className="text-xs uppercase"
-                  data-ocid="tds.vehicle.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Trip Reference</Label>
-                <Select
-                  value={form.tripId}
-                  onValueChange={(v) => setForm((p) => ({ ...p, tripId: v }))}
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="tds.trip.select"
-                  >
-                    <SelectValue placeholder="Select trip (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0" className="text-xs">
-                      None
-                    </SelectItem>
-                    {trips.map((t) => {
-                      const v = vehicles.find(
-                        (veh) =>
-                          veh.id === t.vehicleId ||
-                          Number(veh.id) === Number(t.vehicleId),
-                      );
-                      return (
-                        <SelectItem
-                          key={t.id.toString()}
-                          value={t.id.toString()}
-                          className="text-xs"
-                        >
-                          {t.tripId} — {v?.vehicleNumber ?? "?"}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="tds-advance" className="text-xs">
-                  Cash Advance (₹) *
-                </Label>
-                <Input
-                  id="tds-advance"
                   type="number"
                   min="0"
-                  step="1"
-                  placeholder="0"
-                  value={form.advanceAmount}
+                  step="0.01"
+                  placeholder="0.00"
+                  value={acForm.advanceAmount}
                   onChange={(e) =>
-                    setForm((p) => ({ ...p, advanceAmount: e.target.value }))
+                    setAcForm((p) => ({
+                      ...p,
+                      advanceAmount: e.target.value,
+                      tdsAmount: autoCalcTDS(e.target.value, p.tdsRate),
+                    }))
                   }
-                  required
                   className="text-xs"
-                  data-ocid="tds.advance.input"
+                  data-ocid="tds.ac.advance_amount.input"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">TDS @ 2% (Auto)</Label>
-                <Input
-                  value={`₹${tdsAmount.toFixed(2)}`}
-                  readOnly
-                  className="text-xs bg-muted/30 font-semibold text-amber-600"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="tds-date" className="text-xs">
-                  Entry Date *
-                </Label>
-                <Input
-                  id="tds-date"
-                  type="date"
-                  value={form.entryDate}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, entryDate: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="tds.date.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Status</Label>
+                <Label className="text-xs">TDS Rate (%)</Label>
                 <Select
-                  value={form.status}
-                  onValueChange={(v) => setForm((p) => ({ ...p, status: v }))}
+                  value={acForm.tdsRate}
+                  onValueChange={(v) =>
+                    setAcForm((p) => ({
+                      ...p,
+                      tdsRate: v,
+                      tdsAmount: autoCalcTDS(p.advanceAmount, v),
+                    }))
+                  }
                 >
                   <SelectTrigger
                     className="text-xs"
-                    data-ocid="tds.status.select"
+                    data-ocid="tds.ac.tds_rate.select"
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pending" className="text-xs">
-                      Pending
-                    </SelectItem>
-                    <SelectItem value="paid" className="text-xs">
-                      Paid
-                    </SelectItem>
+                    {["1", "2", "5", "10"].map((r) => (
+                      <SelectItem key={r} value={r} className="text-xs">
+                        {r}%
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tds-remarks" className="text-xs">
-                Remarks
-              </Label>
-              <Input
-                id="tds-remarks"
-                placeholder="Optional notes"
-                value={form.remarks}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, remarks: e.target.value }))
-                }
-                className="text-xs"
-                data-ocid="tds.remarks.input"
-              />
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">
+                  TDS Amount (₹) — Auto-calculated
+                </Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={acForm.tdsAmount}
+                  onChange={(e) =>
+                    setAcForm((p) => ({ ...p, tdsAmount: e.target.value }))
+                  }
+                  className="text-xs font-semibold"
+                  data-ocid="tds.ac.tds_amount.input"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">Remarks</Label>
+                <Input
+                  placeholder="Optional notes"
+                  value={acForm.remarks}
+                  onChange={(e) =>
+                    setAcForm((p) => ({ ...p, remarks: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.ac.remarks.input"
+                />
+              </div>
             </div>
             <DialogFooter>
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setDialogOpen(false)}
+                onClick={() => setAcDialog(false)}
                 className="text-xs"
-                data-ocid="tds.cancel_button"
+                data-ocid="tds.ac.cancel_button"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
-                disabled={isSaving || !form.ownerName || !form.advanceAmount}
+                disabled={
+                  isSaving || !acForm.vehicleNo || !acForm.advanceAmount
+                }
                 className="text-xs"
-                data-ocid="tds.submit_button"
+                data-ocid="tds.ac.submit_button"
               >
                 {isSaving ? (
                   <>
                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                     Saving...
                   </>
-                ) : editingItem ? (
-                  "Update Entry"
+                ) : acEditing ? (
+                  "Update"
                 ) : (
                   "Add Entry"
                 )}
@@ -734,12 +1248,380 @@ export default function TDSPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* ─── Vehicle Payment Dialog ──────────────────────────────────────── */}
+      <Dialog open={vpDialog} onOpenChange={setVpDialog}>
+        <DialogContent
+          className="max-w-lg"
+          data-ocid="tds.vehicle_payment.dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display">
+              {vpEditing ? "Edit" : "Add"} TDS at Vehicle Final Payment
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleVpSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Date *</Label>
+                <Input
+                  type="date"
+                  value={vpForm.entryDate}
+                  onChange={(e) =>
+                    setVpForm((p) => ({ ...p, entryDate: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.date.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Vehicle No *</Label>
+                <Input
+                  placeholder="MH-12-AB-1234"
+                  value={vpForm.vehicleNo}
+                  onChange={(e) =>
+                    setVpForm((p) => ({ ...p, vehicleNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.vehicle_no.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Challan No</Label>
+                <Input
+                  placeholder="Challan No"
+                  value={vpForm.challanNo}
+                  onChange={(e) =>
+                    setVpForm((p) => ({ ...p, challanNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.challan_no.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">PAN No</Label>
+                <Input
+                  placeholder="AAAAA0000A"
+                  value={vpForm.ownerPAN}
+                  onChange={(e) =>
+                    setVpForm((p) => ({
+                      ...p,
+                      ownerPAN: e.target.value.toUpperCase(),
+                    }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.pan.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Payment Amount (₹) *</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={vpForm.advanceAmount}
+                  onChange={(e) =>
+                    setVpForm((p) => ({
+                      ...p,
+                      advanceAmount: e.target.value,
+                      tdsAmount: autoCalcTDS(e.target.value, p.tdsRate),
+                    }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.payment_amount.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">TDS Rate (%)</Label>
+                <Select
+                  value={vpForm.tdsRate}
+                  onValueChange={(v) =>
+                    setVpForm((p) => ({
+                      ...p,
+                      tdsRate: v,
+                      tdsAmount: autoCalcTDS(p.advanceAmount, v),
+                    }))
+                  }
+                >
+                  <SelectTrigger
+                    className="text-xs"
+                    data-ocid="tds.vp.tds_rate.select"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["1", "2", "5", "10"].map((r) => (
+                      <SelectItem key={r} value={r} className="text-xs">
+                        {r}%
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">
+                  TDS Amount (₹) — Auto-calculated
+                </Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={vpForm.tdsAmount}
+                  onChange={(e) =>
+                    setVpForm((p) => ({ ...p, tdsAmount: e.target.value }))
+                  }
+                  className="text-xs font-semibold"
+                  data-ocid="tds.vp.tds_amount.input"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">UTR / Reference No</Label>
+                <Input
+                  placeholder="UTR number"
+                  value={vpForm.utrReference}
+                  onChange={(e) =>
+                    setVpForm((p) => ({ ...p, utrReference: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.utr.input"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">Remarks</Label>
+                <Input
+                  placeholder="Optional notes"
+                  value={vpForm.remarks}
+                  onChange={(e) =>
+                    setVpForm((p) => ({ ...p, remarks: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.vp.remarks.input"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setVpDialog(false)}
+                className="text-xs"
+                data-ocid="tds.vp.cancel_button"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  isSaving || !vpForm.vehicleNo || !vpForm.advanceAmount
+                }
+                className="text-xs"
+                data-ocid="tds.vp.submit_button"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Saving...
+                  </>
+                ) : vpEditing ? (
+                  "Update"
+                ) : (
+                  "Add Entry"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── TDS Receivable Dialog ───────────────────────────────────────── */}
+      <Dialog open={trDialog} onOpenChange={setTrDialog}>
+        <DialogContent
+          className="max-w-lg"
+          data-ocid="tds.tds_receivable.dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display">
+              {trEditing ? "Edit" : "Add"} TDS Receivable from Consignee
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleTrSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Date *</Label>
+                <Input
+                  type="date"
+                  value={trForm.entryDate}
+                  onChange={(e) =>
+                    setTrForm((p) => ({ ...p, entryDate: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.date.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Invoice No *</Label>
+                <Input
+                  placeholder="INV/2026-03/001"
+                  value={trForm.invoiceNo}
+                  onChange={(e) =>
+                    setTrForm((p) => ({ ...p, invoiceNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.invoice_no.input"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">Consignee Name *</Label>
+                <Input
+                  placeholder="e.g., Jindal Steel Works"
+                  value={trForm.ownerName}
+                  onChange={(e) =>
+                    setTrForm((p) => ({ ...p, ownerName: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.consignee_name.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">PAN No</Label>
+                <Input
+                  placeholder="AAAAA0000A"
+                  value={trForm.ownerPAN}
+                  onChange={(e) =>
+                    setTrForm((p) => ({
+                      ...p,
+                      ownerPAN: e.target.value.toUpperCase(),
+                    }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.pan.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Reference No</Label>
+                <Input
+                  placeholder="Ref No"
+                  value={trForm.referenceNo}
+                  onChange={(e) =>
+                    setTrForm((p) => ({ ...p, referenceNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.reference_no.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Bill Amount (₹) *</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={trForm.billAmount}
+                  onChange={(e) =>
+                    setTrForm((p) => ({
+                      ...p,
+                      billAmount: e.target.value,
+                      tdsAmount: autoCalcTDS(e.target.value, p.tdsRate),
+                    }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.bill_amount.input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">TDS Rate (%)</Label>
+                <Select
+                  value={trForm.tdsRate}
+                  onValueChange={(v) =>
+                    setTrForm((p) => ({
+                      ...p,
+                      tdsRate: v,
+                      tdsAmount: autoCalcTDS(p.billAmount, v),
+                    }))
+                  }
+                >
+                  <SelectTrigger
+                    className="text-xs"
+                    data-ocid="tds.tr.tds_rate.select"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["1", "2", "5", "10"].map((r) => (
+                      <SelectItem key={r} value={r} className="text-xs">
+                        {r}%
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">
+                  TDS Amount (₹) — Auto-calculated
+                </Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={trForm.tdsAmount}
+                  onChange={(e) =>
+                    setTrForm((p) => ({ ...p, tdsAmount: e.target.value }))
+                  }
+                  className="text-xs font-semibold"
+                  data-ocid="tds.tr.tds_amount.input"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">Remarks</Label>
+                <Input
+                  placeholder="Optional notes"
+                  value={trForm.remarks}
+                  onChange={(e) =>
+                    setTrForm((p) => ({ ...p, remarks: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="tds.tr.remarks.input"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setTrDialog(false)}
+                className="text-xs"
+                data-ocid="tds.tr.cancel_button"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSaving || !trForm.ownerName || !trForm.billAmount}
+                className="text-xs"
+                data-ocid="tds.tr.submit_button"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Saving...
+                  </>
+                ) : trEditing ? (
+                  "Update"
+                ) : (
+                  "Add Entry"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Delete Confirm Dialog ───────────────────────────────────────── */}
       <Dialog
         open={!!deleteConfirm}
         onOpenChange={() => setDeleteConfirm(null)}
       >
-        <DialogContent className="max-w-sm" data-ocid="tds.delete_dialog">
+        <DialogContent className="max-w-sm" data-ocid="tds.delete.dialog">
           <DialogHeader>
             <DialogTitle className="font-display">
               Delete TDS Record
@@ -753,7 +1635,7 @@ export default function TDSPage() {
               variant="outline"
               onClick={() => setDeleteConfirm(null)}
               className="text-xs"
-              data-ocid="tds.delete_cancel_button"
+              data-ocid="tds.delete.cancel_button"
             >
               Cancel
             </Button>
@@ -762,7 +1644,7 @@ export default function TDSPage() {
               onClick={handleDelete}
               disabled={deleteTDS.isPending}
               className="text-xs"
-              data-ocid="tds.delete_confirm_button"
+              data-ocid="tds.delete.confirm_button"
             >
               {deleteTDS.isPending ? (
                 <>

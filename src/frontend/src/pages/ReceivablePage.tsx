@@ -36,41 +36,38 @@ import {
   Trash2,
   TrendingUp,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   type Receivable,
+  type ReceivablePayment,
   syncReceivablesFromInvoices,
+  useAddReceivablePayment,
   useDeleteReceivable,
   useGetAllBillingInvoices,
   useGetAllReceivables,
-  useUpdateReceivable,
 } from "../hooks/useQueries";
 import { formatCurrency, formatDate } from "../utils/format";
 
 const PAYMENT_MODES = ["Cash", "NEFT", "RTGS", "Cheque", "Online"];
 
-interface EditFormData {
-  amountReceived: string;
-  newAmountToReceive: string;
-  tdsDeduction: string;
-  penaltyAmount: string;
-  penaltyBillFile: string;
-  paymentDate: string;
-  paymentMode: string;
-  referenceNumber: string;
+interface NewPaymentForm {
+  date: string;
+  amount: string;
+  tdsDeducted: string;
+  penalty: string;
+  reference: string;
+  mode: string;
   remarks: string;
 }
 
-const defaultEditForm: EditFormData = {
-  amountReceived: "",
-  newAmountToReceive: "",
-  tdsDeduction: "",
-  penaltyAmount: "",
-  penaltyBillFile: "",
-  paymentDate: "",
-  paymentMode: "",
-  referenceNumber: "",
+const defaultNewPaymentForm: NewPaymentForm = {
+  date: new Date().toISOString().slice(0, 10),
+  amount: "",
+  tdsDeducted: "",
+  penalty: "",
+  reference: "",
+  mode: "",
   remarks: "",
 };
 
@@ -99,17 +96,17 @@ function getStatusClass(status: string) {
 export default function ReceivablePage() {
   const receivablesQuery = useGetAllReceivables();
   const invoicesQuery = useGetAllBillingInvoices();
-  const updateReceivable = useUpdateReceivable();
   const deleteReceivable = useDeleteReceivable();
+  const addPayment = useAddReceivablePayment();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<Receivable | null>(null);
-  const [form, setForm] = useState<EditFormData>(defaultEditForm);
+  const [newPaymentForm, setNewPaymentForm] = useState<NewPaymentForm>(
+    defaultNewPaymentForm,
+  );
   const [deleteConfirm, setDeleteConfirm] = useState<Receivable | null>(null);
   const [activeTab, setActiveTab] = useState("all");
   const [penaltyPreview, setPenaltyPreview] = useState<Receivable | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   // Filters
   const [filterClient, setFilterClient] = useState("all");
   const [filterConsigner, setFilterConsigner] = useState("all");
@@ -191,84 +188,38 @@ export default function ReceivablePage() {
 
   const openEditDialog = (record: Receivable) => {
     setEditingRecord(record);
-    setForm({
-      amountReceived: record.amountReceived.toString(),
-      newAmountToReceive: "",
-      tdsDeduction: (record.tdsDeduction ?? 0).toString(),
-      penaltyAmount: (record.penaltyAmount ?? 0).toString(),
-      penaltyBillFile: record.penaltyBillFile ?? "",
-      paymentDate: record.paymentDate,
-      paymentMode: record.paymentMode,
-      referenceNumber: record.referenceNumber,
-      remarks: record.remarks,
-    });
+    setNewPaymentForm({ ...defaultNewPaymentForm });
     setDialogOpen(true);
   };
 
-  const invoiceAmount = editingRecord?.invoiceAmount ?? 0;
-  const isPartialMode =
-    (editingRecord?.status === "partial" ||
-      (editingRecord?.amountReceived ?? 0) > 0) &&
-    (editingRecord?.balance ?? 0) > 0;
-  const newAmountToReceive = Number(form.newAmountToReceive || 0);
-  // For partial mode, amountReceived = previously received + new incremental amount
-  const amountReceived = isPartialMode
-    ? (editingRecord?.amountReceived ?? 0) + newAmountToReceive
-    : Number(form.amountReceived || 0);
-  const tdsDeduction = Number(form.tdsDeduction || 0);
-  const penaltyAmount = Number(form.penaltyAmount || 0);
-  const previewBalance = Math.max(
-    0,
-    invoiceAmount - amountReceived - tdsDeduction - penaltyAmount,
-  );
-  const isPartialPaymentNow =
-    isPartialMode &&
-    newAmountToReceive > 0 &&
-    newAmountToReceive < (editingRecord?.balance ?? 0);
-  const isFullPaymentNow =
-    isPartialMode && newAmountToReceive >= (editingRecord?.balance ?? 0);
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("File too large. Max 5MB allowed.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setForm((p) => ({ ...p, penaltyBillFile: reader.result as string }));
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleAddNewPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
+    const amt = Number(newPaymentForm.amount || 0);
+    if (amt <= 0) {
+      toast.error("Please enter a valid amount.");
+      return;
+    }
+    const payment: ReceivablePayment = {
+      id: Date.now().toString(),
+      date: newPaymentForm.date,
+      amount: amt,
+      tdsDeducted: Number(newPaymentForm.tdsDeducted || 0),
+      penalty: Number(newPaymentForm.penalty || 0),
+      reference: newPaymentForm.reference,
+      mode: newPaymentForm.mode,
+      remarks: newPaymentForm.remarks,
+      createdAt: new Date().toISOString(),
+    };
     try {
-      await updateReceivable.mutateAsync({
-        id: editingRecord.id,
-        billingInvoiceId: editingRecord.billingInvoiceId ?? 0n,
-        invoiceDate: editingRecord.invoiceDate ?? editingRecord.date,
-        date: editingRecord.date,
-        invoiceNumber: editingRecord.invoiceNumber,
-        clientName: editingRecord.clientName,
-        vehicleNo: editingRecord.vehicleNo ?? "",
-        consignerName: editingRecord.consignerName ?? "",
-        invoiceAmount: editingRecord.invoiceAmount,
-        amountReceived,
-        tdsDeduction,
-        penaltyAmount,
-        penaltyBillFile: form.penaltyBillFile,
-        paymentDate: form.paymentDate,
-        paymentMode: form.paymentMode,
-        referenceNumber: form.referenceNumber,
-        remarks: form.remarks,
-      });
-      toast.success("Record updated");
+      await addPayment.mutateAsync({ id: editingRecord.id, payment });
+      toast.success("Payment recorded successfully.");
+      // Refresh editingRecord from updated data
+      setNewPaymentForm({ ...defaultNewPaymentForm });
+      // Close dialog after adding payment
       setDialogOpen(false);
     } catch {
-      toast.error("Failed to update record.");
+      toast.error("Failed to record payment.");
     }
   };
 
@@ -282,8 +233,6 @@ export default function ReceivablePage() {
       toast.error("Failed to delete.");
     }
   };
-
-  const isSaving = updateReceivable.isPending;
 
   return (
     <div className="p-6 space-y-5" data-ocid="receivable.page">
@@ -702,7 +651,7 @@ export default function ReceivablePage() {
         )}
       </div>
 
-      {/* Edit Dialog (payment recording) */}
+      {/* Payment Dialog - history + new payment */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
           className="max-w-2xl max-h-[90vh] overflow-y-auto"
@@ -712,8 +661,8 @@ export default function ReceivablePage() {
             <DialogTitle className="font-display">Record Payment</DialogTitle>
           </DialogHeader>
           {editingRecord && (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Invoice details (read-only) */}
+            <div className="space-y-4">
+              {/* Invoice Summary */}
               <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
                 <p className="text-xs font-semibold text-foreground">
                   Invoice Details
@@ -726,342 +675,359 @@ export default function ReceivablePage() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Date</p>
-                    <p className="font-medium">
-                      {formatDate(editingRecord.date)}
-                    </p>
-                  </div>
-                  <div>
                     <p className="text-muted-foreground">Invoice Amount</p>
                     <p className="font-bold text-foreground">
                       {formatCurrency(editingRecord.invoiceAmount)}
                     </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Vehicle</p>
-                    <p className="font-mono">
-                      {editingRecord.vehicleNo || "-"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Consigner (OCP)</p>
-                    <p className="font-medium">
-                      {editingRecord.consignerName || "-"}
-                    </p>
-                  </div>
-                  <div>
                     <p className="text-muted-foreground">Client</p>
                     <p className="font-medium">{editingRecord.clientName}</p>
                   </div>
+                  <div>
+                    <p className="text-muted-foreground">Total Received</p>
+                    <p
+                      className="font-bold"
+                      style={{ color: "oklch(0.4 0.16 150)" }}
+                    >
+                      {formatCurrency(editingRecord.amountReceived)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Balance Remaining</p>
+                    <p
+                      className="font-bold"
+                      style={{
+                        color:
+                          editingRecord.balance > 0
+                            ? "oklch(0.45 0.2 27)"
+                            : "oklch(0.4 0.16 150)",
+                      }}
+                    >
+                      {formatCurrency(editingRecord.balance)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Status</p>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded border capitalize ${getStatusClass(editingRecord.status)}`}
+                    >
+                      {editingRecord.status}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Partial payment mode: show incremental entry */}
-              {isPartialMode && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
-                  <p className="text-xs font-semibold text-amber-800">
-                    Partial Payment — Record Additional Receipt
-                  </p>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <p className="text-muted-foreground">
-                        Previously Received
-                      </p>
-                      <p className="font-bold text-green-700">
-                        {formatCurrency(editingRecord?.amountReceived ?? 0)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Balance Remaining</p>
-                      <p
-                        className="font-bold"
-                        style={{ color: "oklch(0.45 0.2 27)" }}
-                      >
-                        {formatCurrency(editingRecord?.balance ?? 0)}
-                      </p>
-                    </div>
+              {/* Payment History */}
+              {(editingRecord.payments ?? []).length > 0 && (
+                <div className="rounded-lg border border-border bg-card overflow-hidden">
+                  <div className="px-3 py-2 border-b border-border bg-muted/30">
+                    <p className="text-xs font-semibold text-foreground">
+                      Payment History ({(editingRecord.payments ?? []).length}{" "}
+                      installment
+                      {(editingRecord.payments ?? []).length !== 1 ? "s" : ""})
+                    </p>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label
-                      htmlFor="rcvNewAmount"
-                      className="text-xs font-medium"
-                    >
-                      New Amount to Receive Now (₹)
-                    </Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="rcvNewAmount"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        max={editingRecord?.balance ?? undefined}
-                        placeholder="0.00"
-                        value={form.newAmountToReceive}
-                        onChange={(e) =>
-                          setForm((p) => ({
-                            ...p,
-                            newAmountToReceive: e.target.value,
-                          }))
-                        }
-                        className="text-xs"
-                        data-ocid="receivable.new_amount.input"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="text-xs whitespace-nowrap border-green-600 text-green-700 hover:bg-green-50"
-                        onClick={() =>
-                          setForm((p) => ({
-                            ...p,
-                            newAmountToReceive: (
-                              editingRecord?.balance ?? 0
-                            ).toString(),
-                          }))
-                        }
-                        data-ocid="receivable.receive_full_balance.button"
-                      >
-                        Receive Full Balance
-                      </Button>
-                    </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-muted/20">
+                          <th className="text-left px-3 py-2 font-semibold text-muted-foreground">
+                            Date
+                          </th>
+                          <th className="text-right px-3 py-2 font-semibold text-muted-foreground">
+                            Amount
+                          </th>
+                          <th className="text-right px-3 py-2 font-semibold text-muted-foreground">
+                            TDS Ded.
+                          </th>
+                          <th className="text-right px-3 py-2 font-semibold text-muted-foreground">
+                            Penalty
+                          </th>
+                          <th className="text-left px-3 py-2 font-semibold text-muted-foreground">
+                            Mode
+                          </th>
+                          <th className="text-left px-3 py-2 font-semibold text-muted-foreground">
+                            Reference
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(editingRecord.payments ?? []).map((p, idx) => (
+                          <tr
+                            key={p.id}
+                            className={
+                              idx % 2 === 0 ? "bg-background" : "bg-muted/10"
+                            }
+                          >
+                            <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                              {formatDate(p.date)}
+                            </td>
+                            <td
+                              className="px-3 py-2 text-right font-medium"
+                              style={{ color: "oklch(0.4 0.16 150)" }}
+                            >
+                              {formatCurrency(p.amount)}
+                            </td>
+                            <td className="px-3 py-2 text-right text-muted-foreground">
+                              {p.tdsDeducted
+                                ? formatCurrency(p.tdsDeducted)
+                                : "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right text-muted-foreground">
+                              {p.penalty ? formatCurrency(p.penalty) : "-"}
+                            </td>
+                            <td className="px-3 py-2">{p.mode || "-"}</td>
+                            <td className="px-3 py-2 font-mono">
+                              {p.reference || "-"}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="border-t border-border bg-muted/20 font-semibold">
+                          <td className="px-3 py-2">Total</td>
+                          <td
+                            className="px-3 py-2 text-right"
+                            style={{ color: "oklch(0.4 0.16 150)" }}
+                          >
+                            {formatCurrency(
+                              (editingRecord.payments ?? []).reduce(
+                                (s, p) => s + p.amount,
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">
+                            {formatCurrency(
+                              (editingRecord.payments ?? []).reduce(
+                                (s, p) => s + (p.tdsDeducted ?? 0),
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">
+                            {formatCurrency(
+                              (editingRecord.payments ?? []).reduce(
+                                (s, p) => s + (p.penalty ?? 0),
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td colSpan={2} />
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
-                  {isFullPaymentNow && (
-                    <div
-                      className="rounded-md bg-green-100 border border-green-300 px-3 py-2 text-xs text-green-800 font-medium"
-                      data-ocid="receivable.full_payment.success_state"
-                    >
-                      ✓ Full Payment — Balance will be cleared
-                    </div>
-                  )}
-                  {isPartialPaymentNow && (
-                    <div
-                      className="rounded-md bg-amber-100 border border-amber-300 px-3 py-2 text-xs text-amber-800 font-medium"
-                      data-ocid="receivable.partial_payment.success_state"
-                    >
-                      ⚠ Partial Payment — ₹
-                      {(
-                        (editingRecord?.balance ?? 0) - newAmountToReceive
-                      ).toLocaleString("en-IN")}{" "}
-                      still remaining after this entry
-                    </div>
-                  )}
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                {!isPartialMode && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="rcvReceived" className="text-xs">
-                      Amount Received (₹)
-                    </Label>
-                    <Input
-                      id="rcvReceived"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={form.amountReceived}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          amountReceived: e.target.value,
-                        }))
-                      }
-                      className="text-xs"
-                      data-ocid="receivable.amount_received.input"
-                    />
+              {/* New Payment Entry */}
+              {editingRecord.balance > 0 ? (
+                <form onSubmit={handleAddNewPayment} className="space-y-4">
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <p className="text-xs font-semibold text-foreground mb-3">
+                      New Payment Entry
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Date *</Label>
+                        <input
+                          type="date"
+                          value={newPaymentForm.date}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              date: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.date.input"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Amount (₹) *</Label>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNewPaymentForm((p) => ({
+                                ...p,
+                                amount: editingRecord.balance.toString(),
+                              }))
+                            }
+                            className="text-[10px] px-2 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+                          >
+                            Full Balance (₹
+                            {editingRecord.balance.toLocaleString("en-IN")})
+                          </button>
+                        </div>
+                        <input
+                          type="number"
+                          min="0.01"
+                          max={editingRecord.balance}
+                          step="0.01"
+                          placeholder="0.00"
+                          value={newPaymentForm.amount}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              amount: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.amount.input"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">TDS Deducted (₹)</Label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={newPaymentForm.tdsDeducted}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              tdsDeducted: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.tds.input"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Penalty (₹)</Label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={newPaymentForm.penalty}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              penalty: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.penalty.input"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Payment Mode</Label>
+                        <select
+                          value={newPaymentForm.mode}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              mode: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.mode.select"
+                        >
+                          <option value="">Select mode</option>
+                          {PAYMENT_MODES.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Reference No / UTR</Label>
+                        <input
+                          type="text"
+                          placeholder="Cheque / UTR / Reference"
+                          value={newPaymentForm.reference}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              reference: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.reference.input"
+                        />
+                      </div>
+                      <div className="space-y-1.5 col-span-2">
+                        <Label className="text-xs">Remarks</Label>
+                        <input
+                          type="text"
+                          placeholder="Optional notes"
+                          value={newPaymentForm.remarks}
+                          onChange={(e) =>
+                            setNewPaymentForm((p) => ({
+                              ...p,
+                              remarks: e.target.value,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          data-ocid="receivable.new_payment.remarks.input"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Payment preview banner */}
+                    {Number(newPaymentForm.amount) > 0 &&
+                      (() => {
+                        const amt = Number(newPaymentForm.amount);
+                        const remaining = Math.max(
+                          0,
+                          editingRecord.balance -
+                            amt -
+                            Number(newPaymentForm.tdsDeducted || 0) -
+                            Number(newPaymentForm.penalty || 0),
+                        );
+                        const isFull = remaining <= 0;
+                        return (
+                          <div
+                            className={`mt-3 rounded-md p-2 text-xs font-medium ${isFull ? "bg-green-100 text-green-800 border border-green-300" : "bg-amber-50 text-amber-800 border border-amber-300"}`}
+                          >
+                            {isFull
+                              ? "✓ Full Payment — account will be Cleared after saving"
+                              : `Partial Payment — remaining balance after this payment: ${formatCurrency(remaining)}`}
+                          </div>
+                        );
+                      })()}
                   </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label htmlFor="rcvTDS" className="text-xs">
-                    TDS Deduction (₹)
-                  </Label>
-                  <Input
-                    id="rcvTDS"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={form.tdsDeduction}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, tdsDeduction: e.target.value }))
-                    }
-                    className="text-xs"
-                    data-ocid="receivable.tds_deduction.input"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="rcvPenalty" className="text-xs">
-                    Penalty Amount (₹)
-                  </Label>
-                  <Input
-                    id="rcvPenalty"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={form.penaltyAmount}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, penaltyAmount: e.target.value }))
-                    }
-                    className="text-xs"
-                    data-ocid="receivable.penalty_amount.input"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    Upload Penalty Bill (optional)
-                  </Label>
-                  <div className="flex items-center gap-2">
+
+                  <DialogFooter>
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-xs gap-1.5 h-8"
-                      data-ocid="receivable.penalty_bill.upload_button"
-                    >
-                      <Paperclip className="h-3.5 w-3.5" />
-                      {form.penaltyBillFile ? "Change" : "Attach"}
-                    </Button>
-                    {form.penaltyBillFile && (
-                      <span className="text-xs text-green-700">✓ Attached</span>
-                    )}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*,application/pdf"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Balance preview */}
-              <div className="rounded-md bg-muted/50 border border-border p-3">
-                <p className="text-xs text-muted-foreground">
-                  Balance = Invoice ({formatCurrency(invoiceAmount)}) - Received
-                  ({formatCurrency(amountReceived)}) - TDS (
-                  {formatCurrency(tdsDeduction)}) - Penalty (
-                  {formatCurrency(penaltyAmount)})
-                </p>
-                <p
-                  className="text-base font-bold font-display mt-1"
-                  style={{
-                    color:
-                      previewBalance > 0
-                        ? "oklch(0.45 0.2 27)"
-                        : "oklch(0.4 0.16 150)",
-                  }}
-                >
-                  {formatCurrency(previewBalance)}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="rcvPayDate" className="text-xs">
-                    Payment Date
-                  </Label>
-                  <Input
-                    id="rcvPayDate"
-                    type="date"
-                    value={form.paymentDate}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, paymentDate: e.target.value }))
-                    }
-                    className="text-xs"
-                    data-ocid="receivable.payment_date.input"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Payment Mode</Label>
-                  <Select
-                    value={form.paymentMode}
-                    onValueChange={(v) =>
-                      setForm((p) => ({ ...p, paymentMode: v }))
-                    }
-                  >
-                    <SelectTrigger
+                      onClick={() => setDialogOpen(false)}
                       className="text-xs"
-                      data-ocid="receivable.payment_mode.select"
+                      data-ocid="receivable.cancel_button"
                     >
-                      <SelectValue placeholder="Select mode" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAYMENT_MODES.map((m) => (
-                        <SelectItem key={m} value={m} className="text-xs">
-                          {m}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={addPayment.isPending || !newPaymentForm.amount}
+                      className="text-xs"
+                      data-ocid="receivable.submit_button"
+                    >
+                      {addPayment.isPending ? (
+                        <>
+                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                          Saving...
+                        </>
+                      ) : Number(newPaymentForm.amount) >=
+                        editingRecord.balance ? (
+                        "Confirm Full Payment"
+                      ) : (
+                        "Confirm Partial Payment"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              ) : (
+                <div className="rounded-md bg-green-50 border border-green-200 p-3 text-xs text-green-800 font-medium">
+                  ✓ This invoice is fully cleared. No outstanding balance.
                 </div>
-                <div className="space-y-1.5 col-span-2">
-                  <Label htmlFor="rcvRefNo" className="text-xs">
-                    Reference Number
-                  </Label>
-                  <Input
-                    id="rcvRefNo"
-                    placeholder="Cheque / UTR / Reference"
-                    value={form.referenceNumber}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        referenceNumber: e.target.value,
-                      }))
-                    }
-                    className="text-xs"
-                    data-ocid="receivable.reference_number.input"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="rcvRemarks" className="text-xs">
-                  Remarks
-                </Label>
-                <Textarea
-                  id="rcvRemarks"
-                  placeholder="Additional notes..."
-                  value={form.remarks}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, remarks: e.target.value }))
-                  }
-                  className="text-xs resize-none"
-                  rows={2}
-                  data-ocid="receivable.remarks.textarea"
-                />
-              </div>
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setDialogOpen(false)}
-                  data-ocid="receivable.cancel_button"
-                  className="text-xs"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={isSaving}
-                  data-ocid="receivable.submit_button"
-                  className="text-xs"
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    "Save Payment"
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>
