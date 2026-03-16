@@ -43,10 +43,12 @@ import {
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { SearchableSelect } from "../components/SearchableSelect";
 import {
   type DeliveryOrder,
   useCreateDeliveryOrder,
   useDeleteDeliveryOrder,
+  useGetAllBillingInvoices,
   useGetAllConsignees,
   useGetAllConsigners,
   useGetAllDeliveryOrders,
@@ -170,6 +172,7 @@ export default function DeliveryOrdersPage() {
   const consignersQuery = useGetAllConsigners();
   const consigneesQuery = useGetAllConsignees();
   const loadingTripsQuery = useGetAllLoadingTrips();
+  const billingInvoicesQuery = useGetAllBillingInvoices();
   const createDO = useCreateDeliveryOrder();
   const updateDO = useUpdateDeliveryOrder();
   const deleteDO = useDeleteDeliveryOrder();
@@ -187,6 +190,18 @@ export default function DeliveryOrdersPage() {
   const consigners = consignersQuery.data ?? [];
   const consignees = consigneesQuery.data ?? [];
   const loadingTrips = loadingTripsQuery.data ?? [];
+  const billingInvoices = billingInvoicesQuery.data ?? [];
+  const billedTripIds = new Set<string>(
+    billingInvoices.flatMap((inv) =>
+      (inv.tripIds ?? []).map((id) => id.toString()),
+    ),
+  );
+  const isBilledDO = (doId: bigint) => {
+    const tripsForDO = loadingTrips.filter(
+      (t) => t.doId.toString() === doId.toString(),
+    );
+    return tripsForDO.some((t) => billedTripIds.has(t.id.toString()));
+  };
 
   // Compute dispatched qty directly from loading trips for accurate real-time values
   const getDispatchedQty = (doId: bigint): number => {
@@ -329,6 +344,13 @@ export default function DeliveryOrdersPage() {
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
+    if (isBilledDO(deleteConfirm.id)) {
+      toast.error(
+        "Cannot delete: this DO has trips included in a billing invoice.",
+      );
+      setDeleteConfirm(null);
+      return;
+    }
     try {
       await deleteDO.mutateAsync(deleteConfirm.id);
       toast.success("Delivery Order deleted");
@@ -658,59 +680,33 @@ export default function DeliveryOrdersPage() {
 
               <div className="space-y-1.5">
                 <Label className="text-xs">Consigner (OCP) *</Label>
-                <Select
+                <SearchableSelect
                   value={form.consignerId}
-                  onValueChange={handleConsignerChange}
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="delivery_orders.consigner.select"
-                  >
-                    <SelectValue placeholder="Select OCP" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {consigners.map((c) => (
-                      <SelectItem
-                        key={c.id.toString()}
-                        value={c.id.toString()}
-                        className="text-xs"
-                      >
-                        {c.name} ({c.material})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onChange={handleConsignerChange}
+                  placeholder="Search OCP..."
+                  data-ocid="delivery_orders.consigner.select"
+                  options={consigners.map((c) => ({
+                    value: c.id.toString(),
+                    label: `${c.name} (${c.material})`,
+                  }))}
+                />
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-xs">Consignee (Client)</Label>
-                <Select
+                <SearchableSelect
                   value={form.consigneeId}
-                  onValueChange={(v) =>
-                    setForm((p) => ({ ...p, consigneeId: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="delivery_orders.consignee.select"
-                  >
-                    <SelectValue placeholder="Select client (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0" className="text-xs">
-                      Not specified
-                    </SelectItem>
-                    {consignees.map((c) => (
-                      <SelectItem
-                        key={c.id.toString()}
-                        value={c.id.toString()}
-                        className="text-xs"
-                      >
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onChange={(v) => setForm((p) => ({ ...p, consigneeId: v }))}
+                  placeholder="Search client..."
+                  data-ocid="delivery_orders.consignee.select"
+                  options={[
+                    { value: "0", label: "Not specified" },
+                    ...consignees.map((c) => ({
+                      value: c.id.toString(),
+                      label: c.name,
+                    })),
+                  ]}
+                />
               </div>
 
               <div className="space-y-1.5">

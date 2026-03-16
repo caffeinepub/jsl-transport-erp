@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { SearchableSelect } from "../components/SearchableSelect";
 import {
   type Payable,
   type PayablePayment,
@@ -894,24 +895,21 @@ export default function PayablePage() {
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs">Payment Mode</Label>
-                        <select
+                        <SearchableSelect
                           value={newPayableForm.mode}
-                          onChange={(e) =>
-                            setNewPayableForm((p) => ({
-                              ...p,
-                              mode: e.target.value,
-                            }))
+                          onChange={(v) =>
+                            setNewPayableForm((p) => ({ ...p, mode: v }))
                           }
-                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          placeholder="Select mode..."
                           data-ocid="payable.new_payment.mode.select"
-                        >
-                          <option value="">Select mode</option>
-                          {PAYMENT_MODES.map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </select>
+                          options={[
+                            { value: "", label: "Select mode" },
+                            ...PAYMENT_MODES.map((m) => ({
+                              value: m,
+                              label: m,
+                            })),
+                          ]}
+                        />
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs">UTR / Reference No</Label>

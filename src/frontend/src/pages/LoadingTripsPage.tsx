@@ -38,11 +38,13 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { SearchableSelect } from "../components/SearchableSelect";
 import {
   type LoadingTrip,
   useCreateLoadingTrip,
   useCreateLocalDieselEntry,
   useCreatePettyCashLedger,
+  useCreateVehicle,
   useDeleteLoadingTrip,
   useGetAllBillingInvoices,
   useGetAllConsignees,
@@ -108,6 +110,7 @@ export default function LoadingTripsPage({
   const createPettyCash = useCreatePettyCashLedger();
   const createDieselEntry = useCreateLocalDieselEntry();
   const petrolBunksQuery = useGetAllPetrolBunks();
+  const createVehicle = useCreateVehicle();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [vehicleSearch, setVehicleSearch] = useState("");
@@ -117,6 +120,13 @@ export default function LoadingTripsPage({
   const [form, setForm] = useState<LoadingTripFormData>(defaultForm);
   const [deleteConfirm, setDeleteConfirm] = useState<LoadingTrip | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [quickAddVehicleOpen, setQuickAddVehicleOpen] = useState(false);
+  const [quickVehicleForm, setQuickVehicleForm] = useState({
+    vehicleNumber: "",
+    vehicleType: "Association",
+    ownerName: "",
+    ownerPhone: "",
+  });
 
   const trips = tripsQuery.data ?? [];
   const vehicles = vehiclesQuery.data ?? [];
@@ -363,6 +373,11 @@ export default function LoadingTripsPage({
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
+    if (billedTripIds.has(deleteConfirm.id.toString())) {
+      toast.error("Cannot delete: this trip is included in a billing invoice.");
+      setDeleteConfirm(null);
+      return;
+    }
     try {
       await deleteTrip.mutateAsync(deleteConfirm.id);
       toast.success("Loading trip deleted");
@@ -724,8 +739,24 @@ export default function LoadingTripsPage({
                             .toLowerCase()
                             .includes(vehicleSearch.toLowerCase()),
                       ).length === 0 && (
-                        <div className="px-3 py-2 text-xs text-muted-foreground">
-                          No vehicles found
+                        <div className="px-3 py-2 text-xs">
+                          <span className="text-muted-foreground">
+                            Vehicle not found.{" "}
+                          </span>
+                          <button
+                            type="button"
+                            className="text-primary font-medium hover:underline"
+                            onMouseDown={() => {
+                              setVehicleDropdownOpen(false);
+                              setQuickVehicleForm((p) => ({
+                                ...p,
+                                vehicleNumber: vehicleSearch,
+                              }));
+                              setQuickAddVehicleOpen(true);
+                            }}
+                          >
+                            + Add Vehicle
+                          </button>
                         </div>
                       )}
                     </div>
@@ -748,18 +779,14 @@ export default function LoadingTripsPage({
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Delivery Order (DO)</Label>
-                <Select value={form.doId} onValueChange={handleDOSelect}>
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="loading_trips.do.select"
-                  >
-                    <SelectValue placeholder="Select DO (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0" className="text-xs">
-                      None
-                    </SelectItem>
-                    {dos
+                <SearchableSelect
+                  value={form.doId}
+                  onChange={handleDOSelect}
+                  placeholder="Search DO (optional)..."
+                  data-ocid="loading_trips.do.select"
+                  options={[
+                    { value: "0", label: "None" },
+                    ...dos
                       .filter((d) => d.status === "Active")
                       .map((d) => {
                         const csgName =
@@ -780,75 +807,40 @@ export default function LoadingTripsPage({
                         const remaining = d.doQty - dispatched;
                         const overDispatch =
                           remaining <= 0 && !d.allowOverDispatch;
-                        return (
-                          <SelectItem
-                            key={d.id.toString()}
-                            value={d.id.toString()}
-                            className="text-xs"
-                            disabled={overDispatch}
-                          >
-                            {d.doNumber} — {csgName} (Rem:{" "}
-                            {remaining.toFixed(1)} MT
-                            {overDispatch ? " — FULL" : ""})
-                          </SelectItem>
-                        );
-                      })}
-                  </SelectContent>
-                </Select>
+                        return {
+                          value: d.id.toString(),
+                          label: `${d.doNumber} — ${csgName} (Rem: ${remaining.toFixed(1)} MT${overDispatch ? " — FULL" : ""})`,
+                          disabled: overDispatch,
+                        };
+                      }),
+                  ]}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Consigner (OCP) *</Label>
-                <Select
+                <SearchableSelect
                   value={form.consignerId}
-                  onValueChange={(v) =>
-                    setForm((p) => ({ ...p, consignerId: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="loading_trips.consigner.select"
-                  >
-                    <SelectValue placeholder="Select OCP" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {consigners.map((c) => (
-                      <SelectItem
-                        key={c.id.toString()}
-                        value={c.id.toString()}
-                        className="text-xs"
-                      >
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onChange={(v) => setForm((p) => ({ ...p, consignerId: v }))}
+                  placeholder="Search OCP..."
+                  data-ocid="loading_trips.consigner.select"
+                  options={consigners.map((c) => ({
+                    value: c.id.toString(),
+                    label: c.name,
+                  }))}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Consignee *</Label>
-                <Select
+                <SearchableSelect
                   value={form.consigneeId}
-                  onValueChange={(v) =>
-                    setForm((p) => ({ ...p, consigneeId: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="loading_trips.consignee.select"
-                  >
-                    <SelectValue placeholder="Select destination" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {consignees.map((c) => (
-                      <SelectItem
-                        key={c.id.toString()}
-                        value={c.id.toString()}
-                        className="text-xs"
-                      >
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onChange={(v) => setForm((p) => ({ ...p, consigneeId: v }))}
+                  placeholder="Search destination..."
+                  data-ocid="loading_trips.consignee.select"
+                  options={consignees.map((c) => ({
+                    value: c.id.toString(),
+                    label: c.name,
+                  }))}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="lt-qty" className="text-xs">
@@ -1109,6 +1101,145 @@ export default function LoadingTripsPage({
                 </>
               ) : (
                 "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Quick Add Vehicle Dialog */}
+      <Dialog open={quickAddVehicleOpen} onOpenChange={setQuickAddVehicleOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-display text-base">
+              Add New Vehicle
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Vehicle Number *</Label>
+              <input
+                type="text"
+                placeholder="e.g. MH-12-AB-1234"
+                value={quickVehicleForm.vehicleNumber}
+                onChange={(e) =>
+                  setQuickVehicleForm((p) => ({
+                    ...p,
+                    vehicleNumber: e.target.value.toUpperCase(),
+                  }))
+                }
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                data-ocid="loading_trips.quick_vehicle.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Vehicle Type</Label>
+              <SearchableSelect
+                value={quickVehicleForm.vehicleType}
+                onChange={(v) =>
+                  setQuickVehicleForm((p) => ({ ...p, vehicleType: v }))
+                }
+                options={[
+                  { value: "Association", label: "Association" },
+                  { value: "Non-Association", label: "Non-Association" },
+                  { value: "Own", label: "Own" },
+                  { value: "Vendor", label: "Vendor" },
+                ]}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Owner Name</Label>
+              <input
+                type="text"
+                placeholder="Owner name"
+                value={quickVehicleForm.ownerName}
+                onChange={(e) =>
+                  setQuickVehicleForm((p) => ({
+                    ...p,
+                    ownerName: e.target.value,
+                  }))
+                }
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Owner Contact</Label>
+              <input
+                type="text"
+                placeholder="Phone number"
+                value={quickVehicleForm.ownerPhone}
+                onChange={(e) =>
+                  setQuickVehicleForm((p) => ({
+                    ...p,
+                    ownerPhone: e.target.value,
+                  }))
+                }
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setQuickAddVehicleOpen(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              className="text-xs"
+              disabled={
+                !quickVehicleForm.vehicleNumber.trim() ||
+                createVehicle.isPending
+              }
+              onClick={async () => {
+                if (!quickVehicleForm.vehicleNumber.trim()) return;
+                try {
+                  const vNum = quickVehicleForm.vehicleNumber.trim();
+                  const newId = await createVehicle.mutateAsync({
+                    vehicleNumber: vNum,
+                    vehicleType: quickVehicleForm.vehicleType,
+                    ownerName: quickVehicleForm.ownerName,
+                    ownerPhone: quickVehicleForm.ownerPhone,
+                    ownerAddress: "",
+                    panCard: "",
+                    bank1AccountHolder: "",
+                    bank1BankName: "",
+                    bank1AccountNo: "",
+                    bank1IFSC: "",
+                    bank1Branch: "",
+                    bank2AccountHolder: "",
+                    bank2BankName: "",
+                    bank2AccountNo: "",
+                    bank2IFSC: "",
+                    bank2Branch: "",
+                    insuranceExpiry: "",
+                    pollutionExpiry: "",
+                    fitnessExpiry: "",
+                    isActive: true,
+                  });
+                  setForm((p) => ({ ...p, vehicleId: String(Number(newId)) }));
+                  setVehicleSearch(vNum);
+                  setQuickAddVehicleOpen(false);
+                  setQuickVehicleForm({
+                    vehicleNumber: "",
+                    vehicleType: "Association",
+                    ownerName: "",
+                    ownerPhone: "",
+                  });
+                  toast.success(`Vehicle ${vNum} added and selected`);
+                } catch {
+                  toast.error("Failed to add vehicle");
+                }
+              }}
+              data-ocid="loading_trips.quick_vehicle.save_button"
+            >
+              {createVehicle.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add & Select"
               )}
             </Button>
           </DialogFooter>

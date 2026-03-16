@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { SearchableSelect } from "../components/SearchableSelect";
 import {
   type LoadingTrip,
   type Unloading,
@@ -462,6 +463,14 @@ export default function UnloadingPage({
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
+    const billedInv = billedUnloadingMap.get(deleteConfirm.id.toString());
+    if (billedInv) {
+      toast.error(
+        `Cannot delete: this unloading is included in invoice ${billedInv}.`,
+      );
+      setDeleteConfirm(null);
+      return;
+    }
     try {
       await deleteUnloading.mutateAsync(deleteConfirm.id);
       toast.success("Unloading record deleted");
@@ -782,47 +791,31 @@ export default function UnloadingPage({
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label className="text-xs">Loading Trip *</Label>
-                <Select
+                <SearchableSelect
                   value={form.loadingTripId}
-                  onValueChange={handleTripSelect}
-                >
-                  <SelectTrigger
-                    className="text-xs"
-                    data-ocid="unloading.trip.select"
-                  >
-                    <SelectValue placeholder="Select loaded trip" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {/* When editing: show all trips so the linked trip always appears.
-                        When creating: only show loaded trips; disable those already unloaded */}
-                    {(editingItem ? trips : loadedTrips).map((t) => {
-                      const alreadyUnloaded =
-                        !editingItem &&
-                        unloadings.some((u) => {
-                          try {
-                            return (
-                              BigInt(u.loadingTripId.toString()) ===
-                              BigInt(t.id.toString())
-                            );
-                          } catch {
-                            return false;
-                          }
-                        });
-                      return (
-                        <SelectItem
-                          key={t.id.toString()}
-                          value={t.id.toString()}
-                          className="text-xs"
-                          disabled={alreadyUnloaded}
-                        >
-                          {t.challanNo} — {getVehicleNum(t.vehicleId)} (
-                          {t.loadingQty.toFixed(2)} MT)
-                          {alreadyUnloaded ? " ✓ Already Unloaded" : ""}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
+                  onChange={handleTripSelect}
+                  placeholder="Search challan / vehicle..."
+                  data-ocid="unloading.trip.select"
+                  options={(editingItem ? trips : loadedTrips).map((t) => {
+                    const alreadyUnloaded =
+                      !editingItem &&
+                      unloadings.some((u) => {
+                        try {
+                          return (
+                            BigInt(u.loadingTripId.toString()) ===
+                            BigInt(t.id.toString())
+                          );
+                        } catch {
+                          return false;
+                        }
+                      });
+                    return {
+                      value: t.id.toString(),
+                      label: `${t.challanNo} — ${getVehicleNum(t.vehicleId)} (${t.loadingQty.toFixed(2)} MT)${alreadyUnloaded ? " ✓ Already Unloaded" : ""}`,
+                      disabled: alreadyUnloaded,
+                    };
+                  })}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ul-date" className="text-xs">
