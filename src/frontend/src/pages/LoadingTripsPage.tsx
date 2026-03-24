@@ -326,6 +326,7 @@ export default function LoadingTripsPage({
             remark: `Auto from trip Challan: ${form.challanNo}`,
             source: "trip",
             tripRef: form.challanNo,
+            billNo: "",
           });
         }
         toast.success("Loading trip updated");
@@ -361,6 +362,7 @@ export default function LoadingTripsPage({
             remark: `Auto from trip Challan: ${form.challanNo}`,
             source: "trip",
             tripRef: form.challanNo,
+            billNo: "",
           });
         }
         toast.success("Loading trip recorded");

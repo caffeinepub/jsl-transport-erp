@@ -26,7 +26,8 @@ type Page =
   | "receivable"
   | "payable"
   | "pettycash_ledger"
-  | "petrol_bunks";
+  | "petrol_bunks"
+  | "cash_bank";
 
 function AuthenticatedApp() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");

@@ -28,8 +28,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
 import {
+  Banknote,
   FileText,
   Fuel,
   Loader2,
@@ -38,13 +38,18 @@ import {
   Plus,
   Trash2,
   Truck,
+  Wallet,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  type BunkPayment,
   type LocalDieselEntry,
+  useCreateBunkPayment,
   useCreateLocalDieselEntry,
+  useDeleteBunkPayment,
   useDeleteLocalDieselEntry,
+  useGetAllBunkPayments,
   useGetAllLoadingTrips,
   useGetAllLocalDieselEntries,
   useGetAllVehicles,
@@ -72,14 +77,35 @@ const defaultForm: ManualDieselFormData = {
   billFile: "",
 };
 
+interface BunkPaymentFormData {
+  date: string;
+  bunkName: string;
+  amount: string;
+  paymentMode: string;
+  utrNo: string;
+  remark: string;
+}
+
+const defaultBunkPaymentForm: BunkPaymentFormData = {
+  date: "",
+  bunkName: "",
+  amount: "",
+  paymentMode: "cash",
+  utrNo: "",
+  remark: "",
+};
+
 export default function DieselPage() {
   const manualDieselQuery = useGetAllLocalDieselEntries();
   const loadingTripsQuery = useGetAllLoadingTrips();
   const vehiclesQuery = useGetAllVehicles();
+  const bunkPaymentsQuery = useGetAllBunkPayments();
 
   const createManual = useCreateLocalDieselEntry();
   const updateManual = useUpdateLocalDieselEntry();
   const deleteManual = useDeleteLocalDieselEntry();
+  const createBunkPayment = useCreateBunkPayment();
+  const deleteBunkPayment = useDeleteBunkPayment();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LocalDieselEntry | null>(
@@ -92,9 +118,22 @@ export default function DieselPage() {
   const [billPreview, setBillPreview] = useState<LocalDieselEntry | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Bill No inline edit state
+  const [editBillNoId, setEditBillNoId] = useState<string | null>(null);
+  const [editBillNoValue, setEditBillNoValue] = useState("");
+
+  // Bunk payment dialog
+  const [bunkPaymentDialogOpen, setBunkPaymentDialogOpen] = useState(false);
+  const [bunkPaymentForm, setBunkPaymentForm] = useState<BunkPaymentFormData>(
+    defaultBunkPaymentForm,
+  );
+  const [deleteBunkPaymentConfirm, setDeleteBunkPaymentConfirm] =
+    useState<BunkPayment | null>(null);
+
   const vehicles = vehiclesQuery.data ?? [];
   const trips = loadingTripsQuery.data ?? [];
   const manualEntries = manualDieselQuery.data ?? [];
+  const bunkPayments = bunkPaymentsQuery.data ?? [];
 
   const total = Number(form.litre || 0) * Number(form.rate || 0);
 
@@ -103,6 +142,48 @@ export default function DieselPage() {
     () => trips.filter((t) => (t.hsdAmount ?? 0) > 0 || (t.hsdLitres ?? 0) > 0),
     [trips],
   );
+
+  // Unique bunk names from trip HSD entries and manual entries
+  const uniqueBunkNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const t of tripHSDEntries) {
+      if (t.petrolBunkName) names.add(t.petrolBunkName);
+    }
+    for (const e of manualEntries) {
+      if (e.vendor) names.add(e.vendor);
+    }
+    return Array.from(names).sort();
+  }, [tripHSDEntries, manualEntries]);
+
+  // Bunk-wise diesel summary
+  const bunkSummary = useMemo(() => {
+    const map: Record<
+      string,
+      { totalDiesel: number; totalPaid: number; outstanding: number }
+    > = {};
+    for (const t of tripHSDEntries) {
+      const bunk = t.petrolBunkName || "Unknown";
+      if (!map[bunk])
+        map[bunk] = { totalDiesel: 0, totalPaid: 0, outstanding: 0 };
+      map[bunk].totalDiesel += t.hsdAmount ?? 0;
+    }
+    for (const e of manualEntries) {
+      const bunk = e.vendor || "Unknown";
+      if (!map[bunk])
+        map[bunk] = { totalDiesel: 0, totalPaid: 0, outstanding: 0 };
+      map[bunk].totalDiesel += e.total;
+    }
+    for (const p of bunkPayments) {
+      const bunk = p.bunkName || "Unknown";
+      if (!map[bunk])
+        map[bunk] = { totalDiesel: 0, totalPaid: 0, outstanding: 0 };
+      map[bunk].totalPaid += p.amount;
+    }
+    for (const bunk of Object.keys(map)) {
+      map[bunk].outstanding = map[bunk].totalDiesel - map[bunk].totalPaid;
+    }
+    return map;
+  }, [tripHSDEntries, manualEntries, bunkPayments]);
 
   const getVehicleNo = (vehicleId: bigint) =>
     vehicles.find((v) => v.id.toString() === vehicleId.toString())
@@ -124,16 +205,13 @@ export default function DieselPage() {
     );
     const manualLitres = manualEntries.reduce((s, e) => s + e.litre, 0);
     const manualExpense = manualEntries.reduce((s, e) => s + e.total, 0);
-
     const totalLitres = tripLitres + manualLitres;
     const totalExpense = tripExpense + manualExpense;
 
-    // Truck-wise breakdown (combined)
     const truckMap: Record<
       string,
       { vehicleNo: string; litres: number; total: number }
     > = {};
-
     for (const trip of tripHSDEntries) {
       const vNo = resolveVehicleNo(trip.vehicleId);
       if (!truckMap[vNo])
@@ -211,6 +289,7 @@ export default function DieselPage() {
       remark: form.remark,
       source: "manual",
       tripRef: "",
+      billNo: "",
     };
     try {
       if (editingEntry) {
@@ -234,6 +313,56 @@ export default function DieselPage() {
       setDeleteConfirm(null);
     } catch {
       toast.error("Failed to delete entry.");
+    }
+  };
+
+  // Bill No inline save for trip entries
+  const saveBillNo = async (entry: LocalDieselEntry) => {
+    try {
+      await updateManual.mutateAsync({ ...entry, billNo: editBillNoValue });
+      toast.success("Bill No saved");
+      setEditBillNoId(null);
+    } catch {
+      toast.error("Failed to save bill no.");
+    }
+  };
+
+  // Bunk payment submit
+  const handleBunkPaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bunkPaymentForm.bunkName || !bunkPaymentForm.amount) {
+      toast.error("Please fill all required fields");
+      return;
+    }
+    const userRole = localStorage.getItem("jt_user_role") ?? "User";
+    const data: Omit<BunkPayment, "id"> = {
+      date: bunkPaymentForm.date,
+      bunkName: bunkPaymentForm.bunkName,
+      amount: Number(bunkPaymentForm.amount),
+      paymentMode: bunkPaymentForm.paymentMode,
+      utrNo: bunkPaymentForm.utrNo,
+      remark: bunkPaymentForm.remark,
+      createdBy: userRole,
+      createdDate: new Date().toISOString().split("T")[0],
+    };
+    try {
+      await createBunkPayment.mutateAsync(data);
+      toast.success("Bunk payment recorded");
+      setBunkPaymentDialogOpen(false);
+      setBunkPaymentForm(defaultBunkPaymentForm);
+    } catch {
+      toast.error("Failed to save bunk payment.");
+    }
+  };
+
+  const handleDeleteBunkPayment = async () => {
+    if (!deleteBunkPaymentConfirm) return;
+    try {
+      await deleteBunkPayment.mutateAsync(deleteBunkPaymentConfirm.id);
+      toast.success("Payment deleted");
+      setDeleteBunkPaymentConfirm(null);
+    } catch {
+      toast.error("Failed to delete payment.");
     }
   };
 
@@ -329,7 +458,7 @@ export default function DieselPage() {
         </Card>
       </div>
 
-      {/* Tabs: Trip HSD vs Manual */}
+      {/* Tabs */}
       <Tabs defaultValue="trip" data-ocid="diesel.tabs">
         <TabsList className="h-8">
           <TabsTrigger
@@ -346,9 +475,16 @@ export default function DieselPage() {
           >
             Manual Bunk Bills ({manualEntries.length})
           </TabsTrigger>
+          <TabsTrigger
+            value="bunk_payments"
+            className="text-xs"
+            data-ocid="diesel.bunk_payments.tab"
+          >
+            Bunk Payments ({bunkPayments.length})
+          </TabsTrigger>
         </TabsList>
 
-        {/* Section A: Trip HSD (read-only) */}
+        {/* Section A: Trip HSD (read-only + bill no editable) */}
         <TabsContent value="trip" className="mt-3">
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
@@ -403,47 +539,113 @@ export default function DieselPage() {
                         Amount
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
+                        Bill No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
                         Source
                       </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {tripHSDEntries.map((trip, index) => (
-                      <TableRow
-                        key={trip.id.toString()}
-                        className="table-row-hover"
-                        data-ocid={`diesel.trip.item.${index + 1}`}
-                      >
-                        <TableCell className="text-xs font-mono font-medium text-primary">
-                          {trip.tripId}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {formatDate(trip.loadingDate)}
-                        </TableCell>
-                        <TableCell className="text-xs font-medium font-mono">
-                          {getVehicleNo(trip.vehicleId)}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {trip.petrolBunkName || "-"}
-                        </TableCell>
-                        <TableCell className="text-xs text-right">
-                          {trip.hsdLitres
-                            ? `${formatNumber(trip.hsdLitres)} L`
-                            : "-"}
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-semibold">
-                          {trip.hsdAmount
-                            ? formatCurrency(trip.hsdAmount)
-                            : "-"}
-                        </TableCell>
-                        <TableCell>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                            <Truck className="h-2.5 w-2.5" />
-                            Trip HSD
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {tripHSDEntries.map((trip, index) => {
+                      // Find matching diesel entry for this trip
+                      const dieselEntry = manualEntries.find(
+                        (e) => e.source === "trip" && e.tripRef === trip.tripId,
+                      );
+                      const currentBillNo = dieselEntry?.billNo ?? "";
+                      const isEditing = editBillNoId === trip.tripId;
+                      return (
+                        <TableRow
+                          key={trip.id.toString()}
+                          className="table-row-hover"
+                          data-ocid={`diesel.trip.item.${index + 1}`}
+                        >
+                          <TableCell className="text-xs font-mono font-medium text-primary">
+                            {trip.tripId}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {formatDate(trip.loadingDate)}
+                          </TableCell>
+                          <TableCell className="text-xs font-medium font-mono">
+                            {getVehicleNo(trip.vehicleId)}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {trip.petrolBunkName || "-"}
+                          </TableCell>
+                          <TableCell className="text-xs text-right">
+                            {trip.hsdLitres
+                              ? `${formatNumber(trip.hsdLitres)} L`
+                              : "-"}
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-semibold">
+                            {trip.hsdAmount
+                              ? formatCurrency(trip.hsdAmount)
+                              : "-"}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {isEditing && dieselEntry ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={editBillNoValue}
+                                  onChange={(e) =>
+                                    setEditBillNoValue(e.target.value)
+                                  }
+                                  placeholder="Bill No"
+                                  className="h-6 text-xs w-28"
+                                  autoFocus
+                                />
+                                <Button
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => saveBillNo(dieselEntry)}
+                                >
+                                  Save
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-1 text-[10px]"
+                                  onClick={() => setEditBillNoId(null)}
+                                >
+                                  ✕
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className={
+                                    currentBillNo
+                                      ? "font-mono font-medium"
+                                      : "text-muted-foreground"
+                                  }
+                                >
+                                  {currentBillNo || "—"}
+                                </span>
+                                {dieselEntry && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 w-5 p-0 opacity-50 hover:opacity-100"
+                                    onClick={() => {
+                                      setEditBillNoId(trip.tripId);
+                                      setEditBillNoValue(currentBillNo);
+                                    }}
+                                  >
+                                    <Pencil className="h-2.5 w-2.5" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                              <Truck className="h-2.5 w-2.5" />
+                              Trip HSD
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -588,6 +790,174 @@ export default function DieselPage() {
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* Section C: Bunk Payments */}
+        <TabsContent value="bunk_payments" className="mt-3 space-y-4">
+          {/* Bunk-wise summary cards */}
+          {Object.keys(bunkSummary).length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Object.entries(bunkSummary).map(([bunk, data]) => (
+                <Card key={bunk} className="border border-border">
+                  <CardContent className="p-4">
+                    <p className="text-xs font-semibold text-foreground truncate">
+                      {bunk}
+                    </p>
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Total Diesel
+                        </p>
+                        <p className="text-sm font-bold text-foreground">
+                          {formatCurrency(data.totalDiesel)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Paid
+                        </p>
+                        <p className="text-sm font-bold text-green-600">
+                          {formatCurrency(data.totalPaid)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Outstanding
+                        </p>
+                        <p
+                          className={`text-sm font-bold ${data.outstanding > 0 ? "text-red-600" : "text-green-600"}`}
+                        >
+                          {formatCurrency(Math.abs(data.outstanding))}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
+              <Banknote className="h-3.5 w-3.5 text-muted-foreground" />
+              <p className="text-xs font-semibold text-foreground">
+                Bunk Payment Records
+              </p>
+              <Button
+                size="sm"
+                onClick={() => setBunkPaymentDialogOpen(true)}
+                className="ml-auto gap-1.5 h-7 text-xs"
+                data-ocid="diesel.bunk_payment.new_button"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Record Payment
+              </Button>
+            </div>
+            {bunkPaymentsQuery.isLoading ? (
+              <div className="p-6 space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : bunkPayments.length === 0 ? (
+              <div
+                className="flex flex-col items-center justify-center py-12"
+                data-ocid="diesel.bunk_payments.empty_state"
+              >
+                <Wallet className="h-8 w-8 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  No bunk payments recorded yet
+                </p>
+                <Button
+                  onClick={() => setBunkPaymentDialogOpen(true)}
+                  className="mt-4 gap-2 text-xs"
+                  size="sm"
+                  data-ocid="diesel.bunk_payment.empty_new_button"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Record Payment
+                </Button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="text-xs font-semibold">
+                        Date
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Bunk Name
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Amount
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Mode
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        UTR / Cheque No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Remark
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {bunkPayments.map((payment, index) => (
+                      <TableRow
+                        key={payment.id.toString()}
+                        className="table-row-hover"
+                        data-ocid={`diesel.bunk_payment.item.${index + 1}`}
+                      >
+                        <TableCell className="text-xs text-muted-foreground">
+                          {formatDate(payment.date)}
+                        </TableCell>
+                        <TableCell className="text-xs font-medium">
+                          {payment.bunkName}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-semibold">
+                          {formatCurrency(payment.amount)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              payment.paymentMode === "bank"
+                                ? "default"
+                                : "secondary"
+                            }
+                            className="text-[10px] capitalize"
+                          >
+                            {payment.paymentMode === "bank" ? "Bank" : "Cash"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {payment.utrNo || "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
+                          {payment.remark || "—"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteBunkPaymentConfirm(payment)}
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            data-ocid={`diesel.bunk_payment.delete_button.${index + 1}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -748,8 +1118,6 @@ export default function DieselPage() {
                 />
               </div>
             </div>
-
-            {/* Auto-calculated Total */}
             <div className="rounded-md bg-muted/50 border border-border p-3">
               <p className="text-xs text-muted-foreground">
                 Auto-calculated Total
@@ -758,8 +1126,6 @@ export default function DieselPage() {
                 {formatCurrency(total)}
               </p>
             </div>
-
-            {/* Remark */}
             <div className="space-y-1.5">
               <Label htmlFor="dieselRemark" className="text-xs">
                 Remark / Notes
@@ -776,8 +1142,6 @@ export default function DieselPage() {
                 data-ocid="diesel.form.remark_textarea"
               />
             </div>
-
-            {/* Bill Upload */}
             <div className="space-y-1.5">
               <Label className="text-xs">
                 Upload Petrol Bunk Bill (optional)
@@ -828,7 +1192,6 @@ export default function DieselPage() {
                 </div>
               )}
             </div>
-
             <DialogFooter>
               <Button
                 type="button"
@@ -861,7 +1224,189 @@ export default function DieselPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* Bunk Payment Dialog */}
+      <Dialog
+        open={bunkPaymentDialogOpen}
+        onOpenChange={setBunkPaymentDialogOpen}
+      >
+        <DialogContent
+          className="max-w-md"
+          data-ocid="diesel.bunk_payment.modal"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display">
+              Record Bunk Payment
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleBunkPaymentSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="bpDate" className="text-xs">
+                  Date *
+                </Label>
+                <Input
+                  id="bpDate"
+                  type="date"
+                  value={bunkPaymentForm.date}
+                  onChange={(e) =>
+                    setBunkPaymentForm((p) => ({ ...p, date: e.target.value }))
+                  }
+                  required
+                  className="text-xs"
+                  data-ocid="diesel.bunk_payment.date_input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Payment Mode *</Label>
+                <Select
+                  value={bunkPaymentForm.paymentMode}
+                  onValueChange={(v) =>
+                    setBunkPaymentForm((p) => ({ ...p, paymentMode: v }))
+                  }
+                >
+                  <SelectTrigger
+                    className="text-xs"
+                    data-ocid="diesel.bunk_payment.mode_select"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash" className="text-xs">
+                      Cash
+                    </SelectItem>
+                    <SelectItem value="bank" className="text-xs">
+                      Bank Transfer
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">Bunk Name *</Label>
+                {uniqueBunkNames.length > 0 ? (
+                  <Select
+                    value={bunkPaymentForm.bunkName}
+                    onValueChange={(v) =>
+                      setBunkPaymentForm((p) => ({ ...p, bunkName: v }))
+                    }
+                  >
+                    <SelectTrigger
+                      className="text-xs"
+                      data-ocid="diesel.bunk_payment.bunk_select"
+                    >
+                      <SelectValue placeholder="Select bunk" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {uniqueBunkNames.map((name) => (
+                        <SelectItem key={name} value={name} className="text-xs">
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    placeholder="Enter bunk name"
+                    value={bunkPaymentForm.bunkName}
+                    onChange={(e) =>
+                      setBunkPaymentForm((p) => ({
+                        ...p,
+                        bunkName: e.target.value,
+                      }))
+                    }
+                    required
+                    className="text-xs"
+                    data-ocid="diesel.bunk_payment.bunk_input"
+                  />
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bpAmount" className="text-xs">
+                  Amount (₹) *
+                </Label>
+                <Input
+                  id="bpAmount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={bunkPaymentForm.amount}
+                  onChange={(e) =>
+                    setBunkPaymentForm((p) => ({
+                      ...p,
+                      amount: e.target.value,
+                    }))
+                  }
+                  required
+                  className="text-xs"
+                  data-ocid="diesel.bunk_payment.amount_input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bpUtr" className="text-xs">
+                  UTR / Cheque No
+                </Label>
+                <Input
+                  id="bpUtr"
+                  placeholder="UTR or cheque number"
+                  value={bunkPaymentForm.utrNo}
+                  onChange={(e) =>
+                    setBunkPaymentForm((p) => ({ ...p, utrNo: e.target.value }))
+                  }
+                  className="text-xs"
+                  data-ocid="diesel.bunk_payment.utr_input"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label htmlFor="bpRemark" className="text-xs">
+                  Remark
+                </Label>
+                <Textarea
+                  id="bpRemark"
+                  placeholder="Payment remarks..."
+                  value={bunkPaymentForm.remark}
+                  onChange={(e) =>
+                    setBunkPaymentForm((p) => ({
+                      ...p,
+                      remark: e.target.value,
+                    }))
+                  }
+                  className="text-xs resize-none"
+                  rows={2}
+                  data-ocid="diesel.bunk_payment.remark_textarea"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setBunkPaymentDialogOpen(false)}
+                data-ocid="diesel.bunk_payment.cancel_button"
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={createBunkPayment.isPending}
+                data-ocid="diesel.bunk_payment.submit_button"
+                className="text-xs"
+              >
+                {createBunkPayment.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Record Payment"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm (manual entry) */}
       <Dialog
         open={!!deleteConfirm}
         onOpenChange={() => setDeleteConfirm(null)}
@@ -890,6 +1435,50 @@ export default function DieselPage() {
               className="text-xs"
             >
               {deleteManual.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Bunk Payment Confirm */}
+      <Dialog
+        open={!!deleteBunkPaymentConfirm}
+        onOpenChange={() => setDeleteBunkPaymentConfirm(null)}
+      >
+        <DialogContent
+          className="max-w-sm"
+          data-ocid="diesel.bunk_payment.delete_modal"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display">Delete Payment</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete this bunk payment record?
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteBunkPaymentConfirm(null)}
+              data-ocid="diesel.bunk_payment.delete_cancel_button"
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteBunkPayment}
+              disabled={deleteBunkPayment.isPending}
+              data-ocid="diesel.bunk_payment.delete_confirm_button"
+              className="text-xs"
+            >
+              {deleteBunkPayment.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                   Deleting...

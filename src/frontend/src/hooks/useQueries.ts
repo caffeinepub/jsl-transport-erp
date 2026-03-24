@@ -1431,6 +1431,7 @@ export interface LocalDieselEntry {
   remark: string;
   source: string; // "manual" | "trip"
   tripRef: string; // trip ID like "LT-00001" if source="trip"
+  billNo: string; // Bill number from petrol bunk
 }
 
 export function useGetAllLocalDieselEntries() {
@@ -1482,6 +1483,137 @@ export function useDeleteLocalDieselEntry() {
     },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["localDiesel"] }),
+  });
+}
+
+// =================== BUNK PAYMENT (LOCAL STATE) ===================
+export interface BunkPayment {
+  id: bigint;
+  date: string;
+  bunkName: string;
+  amount: number;
+  paymentMode: string; // "cash" | "bank"
+  utrNo: string;
+  remark: string;
+  createdBy: string;
+  createdDate: string;
+}
+
+export function useGetAllBunkPayments() {
+  return useQuery<BunkPayment[]>({
+    queryKey: ["bunkPayments"],
+    queryFn: async () => loadFromStorage<BunkPayment>("jt_bunk_payments"),
+    staleTime: 0,
+  });
+}
+
+export function useCreateBunkPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<BunkPayment, "id">) => {
+      const items = loadFromStorage<BunkPayment>("jt_bunk_payments");
+      const newItem: BunkPayment = { ...data, id: nextId(items) };
+      saveToStorage("jt_bunk_payments", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["bunkPayments"] }),
+  });
+}
+
+export function useUpdateBunkPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: BunkPayment) => {
+      const items = loadFromStorage<BunkPayment>("jt_bunk_payments");
+      saveToStorage(
+        "jt_bunk_payments",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["bunkPayments"] }),
+  });
+}
+
+export function useDeleteBunkPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<BunkPayment>("jt_bunk_payments");
+      saveToStorage(
+        "jt_bunk_payments",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["bunkPayments"] }),
+  });
+}
+
+// =================== CASH & BANK ENTRY (LOCAL STATE) ===================
+export interface CashBankEntry {
+  id: bigint;
+  date: string;
+  book: string; // "cash" | "bank"
+  transactionType: string; // "receipt" | "payment"
+  category: string;
+  amount: number;
+  narration: string;
+  reference: string;
+  createdBy: string;
+  createdDate: string;
+}
+
+export function useGetAllCashBankEntries() {
+  return useQuery<CashBankEntry[]>({
+    queryKey: ["cashBankEntries"],
+    queryFn: async () => loadFromStorage<CashBankEntry>("jt_cash_bank_entries"),
+    staleTime: 0,
+  });
+}
+
+export function useCreateCashBankEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<CashBankEntry, "id">) => {
+      const items = loadFromStorage<CashBankEntry>("jt_cash_bank_entries");
+      const newItem: CashBankEntry = { ...data, id: nextId(items) };
+      saveToStorage("jt_cash_bank_entries", [...items, newItem]);
+      return newItem.id;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["cashBankEntries"] }),
+  });
+}
+
+export function useUpdateCashBankEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: CashBankEntry) => {
+      const items = loadFromStorage<CashBankEntry>("jt_cash_bank_entries");
+      saveToStorage(
+        "jt_cash_bank_entries",
+        items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["cashBankEntries"] }),
+  });
+}
+
+export function useDeleteCashBankEntry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      const items = loadFromStorage<CashBankEntry>("jt_cash_bank_entries");
+      saveToStorage(
+        "jt_cash_bank_entries",
+        items.filter((i) => !bigIntEq(i.id, id)),
+      );
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["cashBankEntries"] }),
   });
 }
 

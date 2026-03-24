@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
+  Banknote,
   BarChart3,
   BookOpen,
   Building2,
@@ -29,6 +30,7 @@ import { useState } from "react";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import type { LoadingTrip, UserProfile } from "../hooks/useQueries";
 import BillingPage from "../pages/BillingPage";
+import CashBankPage from "../pages/CashBankPage";
 import ConsigneesPage from "../pages/ConsigneesPage";
 import ConsignersPage from "../pages/ConsignersPage";
 import DashboardPage from "../pages/DashboardPage";
@@ -63,7 +65,8 @@ type Page =
   | "receivable"
   | "payable"
   | "pettycash_ledger"
-  | "petrol_bunks";
+  | "petrol_bunks"
+  | "cash_bank";
 
 interface NavItem {
   id: Page;
@@ -179,6 +182,12 @@ const navSections: NavSection[] = [
         icon: Wallet,
         ocid: "sidebar.pettycash_ledger.link",
       },
+      {
+        id: "cash_bank",
+        label: "Cash & Bank",
+        icon: Banknote,
+        ocid: "sidebar.cash_bank.link",
+      },
       { id: "tds", label: "TDS", icon: Receipt, ocid: "sidebar.tds.link" },
     ],
   },
@@ -220,6 +229,7 @@ const pageLabels: Record<Page, string> = {
   payable: "Accounts Payable",
   pettycash_ledger: "Petty Cash Ledger",
   petrol_bunks: "Petrol Bunks",
+  cash_bank: "Cash & Bank Records",
 };
 
 function renderNavItem(
@@ -312,6 +322,8 @@ function PageContent({
       return <PettyCashLedgerPage />;
     case "petrol_bunks":
       return <PetrolBunksPage />;
+    case "cash_bank":
+      return <CashBankPage />;
   }
 }
 
