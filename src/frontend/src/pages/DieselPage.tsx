@@ -121,6 +121,9 @@ export default function DieselPage() {
   // Bill No inline edit state
   const [editBillNoId, setEditBillNoId] = useState<string | null>(null);
   const [editBillNoValue, setEditBillNoValue] = useState("");
+  // Manual bunk bills filters
+  const [manualBunkFilter, setManualBunkFilter] = useState("");
+  const [manualVehicleFilter, setManualVehicleFilter] = useState("");
 
   // Bunk payment dialog
   const [bunkPaymentDialogOpen, setBunkPaymentDialogOpen] = useState(false);
@@ -654,44 +657,245 @@ export default function DieselPage() {
         </TabsContent>
 
         {/* Section B: Manual Bunk Bills (editable) */}
-        <TabsContent value="manual" className="mt-3">
+        <TabsContent value="manual" className="mt-3 space-y-4">
+          {/* Trip HSD entries vehicle-wise for bill number assignment */}
           <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
-              <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-              <p className="text-xs font-semibold text-foreground">
-                Manual Petrol Bunk Bill Entries
-              </p>
-            </div>
-            {manualDieselQuery.isLoading ? (
-              <div className="p-6 space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
+            <div className="px-4 py-3 border-b border-border bg-muted/30 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs font-semibold text-foreground">
+                  Trip HSD Records — Assign Bunk Bill Numbers
+                </p>
               </div>
-            ) : manualEntries.length === 0 ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={manualBunkFilter}
+                  onChange={(e) => setManualBunkFilter(e.target.value)}
+                  className="text-xs border border-border rounded px-2 py-1 bg-white text-gray-900"
+                  data-ocid="diesel.manual.bunk_filter"
+                >
+                  <option value="">All Bunks</option>
+                  {uniqueBunkNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Filter by Vehicle No..."
+                  value={manualVehicleFilter}
+                  onChange={(e) => setManualVehicleFilter(e.target.value)}
+                  className="text-xs border border-border rounded px-2 py-1 bg-white text-gray-900 w-40"
+                  data-ocid="diesel.manual.vehicle_filter"
+                />
+              </div>
+            </div>
+            {tripHSDEntries.length === 0 ? (
               <div
                 className="flex flex-col items-center justify-center py-12"
                 data-ocid="diesel.manual.empty_state"
               >
                 <FileText className="h-8 w-8 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  No manual diesel entries yet
+                  No trip HSD records found
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Add petrol bunk bills with bill upload and remarks
+                  HSD entries are auto-created when you record a loading trip
+                  with HSD amount
                 </p>
-                <Button
-                  onClick={openCreateDialog}
-                  className="mt-4 gap-2 text-xs"
-                  size="sm"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add Entry
-                </Button>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <Table data-ocid="diesel.manual.table">
+                  <TableHeader>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="text-xs font-semibold">
+                        Date
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Challan No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Vehicle No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Petrol Bunk
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Litres
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold text-right">
+                        Amount
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Bill No
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tripHSDEntries
+                      .filter((trip) => {
+                        const vNo = getVehicleNo(trip.vehicleId).toLowerCase();
+                        const bunk = trip.petrolBunkName || "";
+                        return (
+                          (!manualBunkFilter || bunk === manualBunkFilter) &&
+                          (!manualVehicleFilter ||
+                            vNo.includes(manualVehicleFilter.toLowerCase()))
+                        );
+                      })
+                      .map((trip, index) => {
+                        const dieselEntry = manualEntries.find(
+                          (e) =>
+                            e.source === "trip" && e.tripRef === trip.tripId,
+                        );
+                        const isEditing = editBillNoId === trip.tripId;
+                        return (
+                          <TableRow
+                            key={trip.tripId}
+                            data-ocid={`diesel.manual.item.${index + 1}`}
+                            className="table-row-hover"
+                          >
+                            <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                              {trip.loadingDate
+                                ? new Date(trip.loadingDate).toLocaleDateString(
+                                    "en-IN",
+                                  )
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs font-mono font-medium">
+                              {trip.challanNo || trip.tripId}
+                            </TableCell>
+                            <TableCell className="text-xs font-medium font-mono">
+                              {getVehicleNo(trip.vehicleId)}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {trip.petrolBunkName || "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-right">
+                              {trip.hsdLitres ? `${trip.hsdLitres} L` : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-right font-semibold">
+                              ₹{(trip.hsdAmount ?? 0).toLocaleString("en-IN")}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={editBillNoValue}
+                                    onChange={(e) =>
+                                      setEditBillNoValue(e.target.value)
+                                    }
+                                    className="text-xs border border-border rounded px-2 py-1 bg-white text-gray-900 w-28"
+                                    placeholder="Bill No..."
+                                    data-ocid={`diesel.manual.bill_no_input.${index + 1}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (dieselEntry) {
+                                        await updateManual.mutateAsync({
+                                          ...dieselEntry,
+                                          billNo: editBillNoValue,
+                                        });
+                                      }
+                                      setEditBillNoId(null);
+                                      setEditBillNoValue("");
+                                    }}
+                                    className="text-xs bg-green-600 text-white rounded px-2 py-1 hover:bg-green-700"
+                                    data-ocid={`diesel.manual.bill_no_save.${index + 1}`}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditBillNoId(null);
+                                      setEditBillNoValue("");
+                                    }}
+                                    className="text-xs bg-gray-200 text-gray-700 rounded px-2 py-1 hover:bg-gray-300"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : dieselEntry?.billNo ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditBillNoId(trip.tripId);
+                                    setEditBillNoValue(
+                                      dieselEntry.billNo || "",
+                                    );
+                                  }}
+                                  className="text-xs font-mono font-semibold text-green-700 hover:underline"
+                                  data-ocid={`diesel.manual.bill_no_edit.${index + 1}`}
+                                >
+                                  {dieselEntry.billNo}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditBillNoId(trip.tripId);
+                                    setEditBillNoValue("");
+                                  }}
+                                  className="text-xs text-primary hover:underline"
+                                  disabled={!dieselEntry}
+                                  data-ocid={`diesel.manual.bill_no_assign.${index + 1}`}
+                                  title={
+                                    !dieselEntry
+                                      ? "No diesel entry linked"
+                                      : "Click to assign bill number"
+                                  }
+                                >
+                                  {dieselEntry ? "Assign Bill No" : "—"}
+                                </button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+
+          {/* Standalone Manual Entries Section */}
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs font-semibold text-foreground">
+                  Add Standalone Diesel Entry
+                </p>
+                <span className="text-[10px] text-muted-foreground">
+                  (not linked to a loading trip)
+                </span>
+              </div>
+              <Button
+                onClick={openCreateDialog}
+                size="sm"
+                className="gap-1 text-xs"
+                data-ocid="diesel.manual.add_standalone_button"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add Entry
+              </Button>
+            </div>
+            {manualEntries.filter((e) => e.source !== "trip").length === 0 ? (
+              <div
+                className="flex flex-col items-center justify-center py-8"
+                data-ocid="diesel.manual.standalone_empty_state"
+              >
+                <p className="text-xs text-muted-foreground">
+                  No standalone entries yet
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
                       <TableHead className="text-xs font-semibold">
@@ -705,9 +909,6 @@ export default function DieselPage() {
                       </TableHead>
                       <TableHead className="text-xs font-semibold text-right">
                         Litres
-                      </TableHead>
-                      <TableHead className="text-xs font-semibold text-right">
-                        Rate/L
                       </TableHead>
                       <TableHead className="text-xs font-semibold text-right">
                         Total
@@ -724,75 +925,74 @@ export default function DieselPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {manualEntries.map((entry, index) => (
-                      <TableRow
-                        key={entry.id.toString()}
-                        className="table-row-hover"
-                        data-ocid={`diesel.manual.item.${index + 1}`}
-                      >
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDate(entry.date)}
-                        </TableCell>
-                        <TableCell className="text-xs font-medium font-mono">
-                          {getVehicleNo(entry.truckId)}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {entry.vendor}
-                        </TableCell>
-                        <TableCell className="text-xs text-right">
-                          {formatNumber(entry.litre)} L
-                        </TableCell>
-                        <TableCell className="text-xs text-right">
-                          {formatCurrency(entry.rate)}
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-semibold">
-                          {formatCurrency(entry.total)}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
-                          {entry.remark || "-"}
-                        </TableCell>
-                        <TableCell>
-                          {entry.billFile ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setBillPreview(entry)}
-                              className="h-6 gap-1 px-2 text-[10px] text-primary hover:text-primary"
-                              data-ocid={`diesel.bill_button.${index + 1}`}
-                            >
-                              <Paperclip className="h-3 w-3" />
-                              View Bill
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">
-                              —
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openEditDialog(entry)}
-                              className="h-7 w-7 p-0"
-                              data-ocid={`diesel.edit_button.${index + 1}`}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setDeleteConfirm(entry)}
-                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                              data-ocid={`diesel.delete_button.${index + 1}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {manualEntries
+                      .filter((e) => e.source !== "trip")
+                      .map((entry, index) => (
+                        <TableRow
+                          key={entry.id.toString()}
+                          className="table-row-hover"
+                          data-ocid={`diesel.standalone.item.${index + 1}`}
+                        >
+                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                            {new Date(entry.date).toLocaleDateString("en-IN")}
+                          </TableCell>
+                          <TableCell className="text-xs font-medium font-mono">
+                            {getVehicleNo(entry.truckId)}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {entry.vendor}
+                          </TableCell>
+                          <TableCell className="text-xs text-right">
+                            {entry.litre} L
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-semibold">
+                            ₹{entry.total.toLocaleString("en-IN")}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
+                            {entry.remark || "—"}
+                          </TableCell>
+                          <TableCell>
+                            {entry.billFile ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setBillPreview(entry)}
+                                className="h-6 gap-1 px-2 text-[10px] text-primary hover:text-primary"
+                                data-ocid={`diesel.standalone.bill_button.${index + 1}`}
+                              >
+                                <Paperclip className="h-3 w-3" />
+                                View Bill
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                —
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditDialog(entry)}
+                                className="h-7 w-7 p-0"
+                                data-ocid={`diesel.standalone.edit_button.${index + 1}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setDeleteConfirm(entry)}
+                                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                data-ocid={`diesel.standalone.delete_button.${index + 1}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
                   </TableBody>
                 </Table>
               </div>

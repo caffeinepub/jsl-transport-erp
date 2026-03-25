@@ -214,6 +214,69 @@ export default function ReceivablePage() {
     };
     try {
       await addPayment.mutateAsync({ id: editingRecord.id, payment });
+      // Auto-create Cash/Bank entry
+      try {
+        const cashBankEntries = JSON.parse(
+          localStorage.getItem("jt_cash_bank_entries") || "[]",
+        );
+        const maxId = cashBankEntries.reduce(
+          (max: number, e: { id: number }) => Math.max(max, Number(e.id) || 0),
+          0,
+        );
+        cashBankEntries.push({
+          id: maxId + 1,
+          date: payment.date,
+          book: payment.mode === "Cash" ? "cash" : "bank",
+          transactionType: "receipt",
+          category: "Client Receipt",
+          amount: payment.amount,
+          narration: `Invoice ${editingRecord.invoiceNumber} - ${editingRecord.clientName}`,
+          reference: payment.reference || "",
+          bankAccountName: "",
+          createdBy: localStorage.getItem("jt_user_role") || "User",
+          createdDate: new Date().toISOString().split("T")[0],
+        });
+        localStorage.setItem(
+          "jt_cash_bank_entries",
+          JSON.stringify(cashBankEntries),
+        );
+      } catch (_) {
+        /* silent */
+      }
+      // Auto-create TDS entry if TDS deducted
+      if (payment.tdsDeducted > 0) {
+        try {
+          const tdsEntries = JSON.parse(
+            localStorage.getItem("jt_tds_entries") || "[]",
+          );
+          const tdsMaxId = tdsEntries.reduce(
+            (max: number, e: { id: number }) =>
+              Math.max(max, Number(e.id) || 0),
+            0,
+          );
+          tdsEntries.push({
+            id: tdsMaxId + 1,
+            tdsType: "tds_receivable",
+            ownerName: editingRecord.clientName,
+            ownerPAN: "",
+            vehicleNo: "",
+            tripId: 0,
+            challanNo: editingRecord.invoiceNumber,
+            advanceAmount: editingRecord.invoiceAmount,
+            tdsRate: 0,
+            tdsAmount: payment.tdsDeducted,
+            entryDate: payment.date,
+            remarks: `TDS from ${editingRecord.clientName} on Invoice ${editingRecord.invoiceNumber}`,
+            status: "received",
+            invoiceNo: editingRecord.invoiceNumber,
+            billAmount: editingRecord.invoiceAmount,
+            referenceNo: payment.reference || "",
+          });
+          localStorage.setItem("jt_tds_entries", JSON.stringify(tdsEntries));
+        } catch (_) {
+          /* silent */
+        }
+      }
       toast.success("Payment recorded successfully.");
       // Refresh editingRecord from updated data
       setNewPaymentForm({ ...defaultNewPaymentForm });

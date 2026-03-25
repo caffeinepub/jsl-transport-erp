@@ -212,6 +212,35 @@ export default function PayablePage() {
     const isFullPayment = amt >= paymentDialog.balance;
     try {
       await addPayablePayment.mutateAsync({ id: paymentDialog.id, payment });
+      // Auto-create Cash/Bank entry
+      try {
+        const cashBankEntries = JSON.parse(
+          localStorage.getItem("jt_cash_bank_entries") || "[]",
+        );
+        const maxId = cashBankEntries.reduce(
+          (max: number, e: { id: number }) => Math.max(max, Number(e.id) || 0),
+          0,
+        );
+        cashBankEntries.push({
+          id: maxId + 1,
+          date: payment.date,
+          book: payment.mode === "Cash" ? "cash" : "bank",
+          transactionType: "payment",
+          category: "Vehicle Payment",
+          amount: payment.amount,
+          narration: `${paymentDialog.vehicleNumber} - ${paymentDialog.tripReference}`,
+          reference: payment.utr || "",
+          bankAccountName: "",
+          createdBy: localStorage.getItem("jt_user_role") || "User",
+          createdDate: new Date().toISOString().split("T")[0],
+        });
+        localStorage.setItem(
+          "jt_cash_bank_entries",
+          JSON.stringify(cashBankEntries),
+        );
+      } catch (_) {
+        /* silent */
+      }
       if (isFullPayment) {
         toast.success("Full payment recorded. Trip marked as Paid.");
       } else {

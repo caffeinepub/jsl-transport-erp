@@ -610,6 +610,10 @@ export default function TDSPage() {
 
         {/* ─── Vehicle Payment Tab ──────────────────────────────────────── */}
         <TabsContent value="vehicle_payment" className="space-y-4 mt-4">
+          <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700 mb-1">
+            TDS entries are auto-created when you record vehicle payments in
+            Accounts Payable. You can also add manual entries below.
+          </div>
           <div className="flex justify-between items-center">
             <p className="text-sm font-medium text-foreground">
               TDS deducted at the time of final balance payment to vehicle
@@ -747,6 +751,11 @@ export default function TDSPage() {
 
         {/* ─── TDS Receivable Tab ───────────────────────────────────────── */}
         <TabsContent value="tds_receivable" className="space-y-4 mt-4">
+          <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700 mb-1">
+            TDS entries are auto-created when you record a payment with TDS
+            deduction in Accounts Receivable. You can also add manual entries
+            below.
+          </div>
           <div className="flex justify-between items-center">
             <p className="text-sm font-medium text-foreground">
               TDS deducted by clients (e.g., Jindal) on final bill amount

@@ -79,6 +79,7 @@ interface EntryFormData {
   amount: string;
   narration: string;
   reference: string;
+  bankAccountName: string;
 }
 
 const defaultForm: EntryFormData = {
@@ -89,6 +90,7 @@ const defaultForm: EntryFormData = {
   amount: "",
   narration: "",
   reference: "",
+  bankAccountName: "",
 };
 
 export default function CashBankPage() {
@@ -103,14 +105,28 @@ export default function CashBankPage() {
   );
 
   const allEntries = entriesQuery.data ?? [];
+  const [bankAccountFilter, setBankAccountFilter] = useState("");
+
+  const uniqueBankAccounts = useMemo(() => {
+    const names = new Set<string>();
+    for (const e of allEntries) {
+      if (e.book === "bank" && e.bankAccountName) names.add(e.bankAccountName);
+    }
+    return Array.from(names).sort();
+  }, [allEntries]);
 
   const cashEntries = useMemo(
     () => allEntries.filter((e) => e.book === "cash"),
     [allEntries],
   );
   const bankEntries = useMemo(
-    () => allEntries.filter((e) => e.book === "bank"),
-    [allEntries],
+    () =>
+      allEntries.filter(
+        (e) =>
+          e.book === "bank" &&
+          (!bankAccountFilter || e.bankAccountName === bankAccountFilter),
+      ),
+    [allEntries, bankAccountFilter],
   );
 
   const cashSummary = useMemo(() => {
@@ -155,6 +171,7 @@ export default function CashBankPage() {
       amount: Number(form.amount),
       narration: form.narration,
       reference: form.reference,
+      bankAccountName: form.bankAccountName,
       createdBy: userRole,
       createdDate: new Date().toISOString().split("T")[0],
     };
@@ -224,6 +241,11 @@ export default function CashBankPage() {
               <TableHead className="text-xs font-semibold">Date</TableHead>
               <TableHead className="text-xs font-semibold">Type</TableHead>
               <TableHead className="text-xs font-semibold">Category</TableHead>
+              {book === "bank" && (
+                <TableHead className="text-xs font-semibold">
+                  Bank Account
+                </TableHead>
+              )}
               <TableHead className="text-xs font-semibold text-right">
                 Amount
               </TableHead>
@@ -261,6 +283,11 @@ export default function CashBankPage() {
                   )}
                 </TableCell>
                 <TableCell className="text-xs">{entry.category}</TableCell>
+                {book === "bank" && (
+                  <TableCell className="text-xs text-muted-foreground">
+                    {entry.bankAccountName || "—"}
+                  </TableCell>
+                )}
                 <TableCell
                   className={`text-xs text-right font-semibold ${entry.transactionType === "receipt" ? "text-green-600" : "text-red-600"}`}
                 >
@@ -403,6 +430,30 @@ export default function CashBankPage() {
 
         {/* Bank Book */}
         <TabsContent value="bank" className="mt-3">
+          {/* Bank account filter */}
+          {uniqueBankAccounts.length > 0 && (
+            <div className="flex items-center gap-3 mb-4">
+              <label
+                htmlFor="bankAccountFilterSelect"
+                className="text-xs text-muted-foreground font-medium"
+              >
+                Filter by Bank Account:
+              </label>
+              <select
+                value={bankAccountFilter}
+                onChange={(e) => setBankAccountFilter(e.target.value)}
+                className="text-xs border border-border rounded px-2 py-1 bg-white text-gray-900"
+                data-ocid="cashbank.bank_account.select"
+              >
+                <option value="">All Accounts</option>
+                {uniqueBankAccounts.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-4 mb-4">
             <Card className="border border-border">
               <CardContent className="p-4">
@@ -773,6 +824,26 @@ export default function CashBankPage() {
                   data-ocid="cashbank.form.reference_input"
                 />
               </div>
+              {form.book === "bank" && (
+                <div className="space-y-1.5 col-span-2">
+                  <Label htmlFor="cbBankAccount" className="text-xs">
+                    Bank Account Name
+                  </Label>
+                  <Input
+                    id="cbBankAccount"
+                    placeholder="e.g. SBI Current A/c, HDFC Bank..."
+                    value={form.bankAccountName}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        bankAccountName: e.target.value,
+                      }))
+                    }
+                    className="text-xs"
+                    data-ocid="cashbank.form.bank_account_input"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Preview badge */}

@@ -24,13 +24,13 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 43 96% 50%;
     --radius: 0.5rem;
-    --sidebar-background: 222 47% 11%;
+    --sidebar-background: 340 60% 18%;
     --sidebar-foreground: 210 40% 98%;
     --sidebar-primary: 43 96% 50%;
     --sidebar-primary-foreground: 26 83% 14%;
-    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent: 340 40% 25%;
     --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 217 33% 17%;
+    --sidebar-border: 340 40% 25%;
     --sidebar-ring: 43 96% 50%;
   }
 
@@ -64,6 +64,93 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* ============================================================
+   FORM ELEMENT VISIBILITY FIX
+   Ensures typed text is always visible regardless of
+   the parent container's background color.
+   ============================================================ */
+
+/* All native inputs and textareas: white background, dark text */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+    [type="color"]
+  ),
+textarea {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #d1d5db;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+    [type="color"]
+  )::placeholder,
+textarea::placeholder {
+  color: #9ca3af !important;
+  opacity: 1 !important;
+}
+
+/* shadcn Input/Textarea slots */
+[data-slot="input"],
+[data-slot="textarea"] {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+[data-slot="input"]::placeholder,
+[data-slot="textarea"]::placeholder {
+  color: #9ca3af !important;
+  opacity: 1 !important;
+}
+
+/* shadcn Select trigger: ensure selected value text is visible */
+[data-slot="select-trigger"] {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+/* Native select elements */
+select {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+/* Focused input ring fix */
+input:not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus,
+[data-slot="select-trigger"]:focus {
+  outline: 2px solid hsl(43 96% 50%);
+  outline-offset: 1px;
+  border-color: hsl(43 96% 50%);
+}
+
+/* ============================================================
+   PINK THEME FOR ALL ADD/EDIT DIALOG CARDS
+   Every modal/dialog that opens for adding or editing a record
+   will show a soft pink background.
+   ============================================================ */
+[data-slot="dialog-content"],
+[role="dialog"][data-state="open"] > [data-slot="dialog-content"] {
+  background-color: #fdf2f8 !important;
+  border-color: #f9a8d4 !important;
+}
+
+/* Ensure dialog header and footer sections also carry the pink tone */
+[data-slot="dialog-content"] [data-slot="dialog-header"],
+[data-slot="dialog-content"] [data-slot="dialog-footer"] {
+  background-color: transparent;
+}
+
+/* Dialog / modal overflow for long forms */
+[data-slot="dialog-content"],
+[role="dialog"] {
+  overflow-y: auto;
+  max-height: 90vh;
+}
+
+/* Form labels: always legible */
+label {
+  color: #374151;
 }
 
 /* Custom scrollbar */

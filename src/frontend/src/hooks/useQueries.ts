@@ -1561,6 +1561,7 @@ export interface CashBankEntry {
   amount: number;
   narration: string;
   reference: string;
+  bankAccountName?: string;
   createdBy: string;
   createdDate: string;
 }
