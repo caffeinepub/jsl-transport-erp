@@ -327,6 +327,7 @@ export default function LoadingTripsPage({
             source: "trip",
             tripRef: form.challanNo,
             billNo: "",
+            slipNo: "",
           });
         }
         toast.success("Loading trip updated");
@@ -363,6 +364,7 @@ export default function LoadingTripsPage({
             source: "trip",
             tripRef: form.challanNo,
             billNo: "",
+            slipNo: "",
           });
         }
         toast.success("Loading trip recorded");

@@ -763,33 +763,43 @@ export interface Unloading {
   netPayableToVehicle: number;
 }
 
+// =================== ACTOR SINGLETON FOR SHARED STORAGE ===================
+let _erpActor: any = null;
+export function setERPActor(actor: any) {
+  _erpActor = actor;
+}
+
 // =================== LOCAL STORAGE HELPERS ===================
-function loadFromStorage<T>(key: string): T[] {
+async function loadFromStorage<T>(key: string): Promise<T[]> {
+  const reviver = (_k: string, v: any) => {
+    if (typeof v === "string" && /^\d+n$/.test(v))
+      return BigInt(v.slice(0, -1));
+    return v;
+  };
   try {
+    if (_erpActor) {
+      const raw: [string] | [] = await _erpActor.getData(key);
+      if (!raw || raw.length === 0) return [];
+      return JSON.parse(raw[0], reviver) as T[];
+    }
+    // Fallback to localStorage if actor not ready
     const raw = localStorage.getItem(key);
     if (!raw) return [];
-    // Parse BigInt from JSON using reviver
-    return JSON.parse(raw, (_k, v) => {
-      if (typeof v === "string" && /^\d+n$/.test(v))
-        return BigInt(v.slice(0, -1));
-      return v;
-    }) as T[];
+    return JSON.parse(raw, reviver) as T[];
   } catch {
     return [];
   }
 }
 
-function saveToStorage<T>(key: string, data: T[]): void {
-  try {
-    localStorage.setItem(
-      key,
-      JSON.stringify(data, (_k, v) => {
-        if (typeof v === "bigint") return `${v}n`;
-        return v;
-      }),
-    );
-  } catch {
-    // ignore
+async function saveToStorage<T>(key: string, data: T[]): Promise<void> {
+  const serialized = JSON.stringify(data, (_k, v) => {
+    if (typeof v === "bigint") return `${v}n`;
+    return v;
+  });
+  if (_erpActor) {
+    await _erpActor.setData(key, serialized);
+  } else {
+    localStorage.setItem(key, serialized);
   }
 }
 
@@ -812,7 +822,7 @@ export function useGetAllConsigners() {
   return useQuery<Consigner[]>({
     queryKey: ["consigners"],
     queryFn: async () => {
-      const items = loadFromStorage<Consigner>("jt_consigners");
+      const items = await loadFromStorage<Consigner>("jt_consigners");
       // Normalise numeric fields that may have been stored as strings
       return items.map((item) => ({
         ...item,
@@ -831,9 +841,9 @@ export function useCreateConsigner() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Consigner, "id">) => {
-      const items = loadFromStorage<Consigner>("jt_consigners");
+      const items = await loadFromStorage<Consigner>("jt_consigners");
       const newItem: Consigner = { ...data, id: nextId(items) };
-      saveToStorage("jt_consigners", [...items, newItem]);
+      await saveToStorage("jt_consigners", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -845,9 +855,9 @@ export function useUpdateConsigner() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Consigner) => {
-      const items = loadFromStorage<Consigner>("jt_consigners");
+      const items = await loadFromStorage<Consigner>("jt_consigners");
       const updated = items.map((i) => (i.id === data.id ? data : i));
-      saveToStorage("jt_consigners", updated);
+      await saveToStorage("jt_consigners", updated);
     },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["consigners"] }),
@@ -858,22 +868,22 @@ export function useDeleteConsigner() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<Consigner>("jt_consigners");
-      saveToStorage(
+      const items = await loadFromStorage<Consigner>("jt_consigners");
+      await saveToStorage(
         "jt_consigners",
         items.filter((i) => i.id !== id),
       );
       // Cascade: remove DOs linked to this consigner
-      const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+      const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
       const removedDOs = dos.filter((d) => bigIntEq(d.consignerId ?? 0n, id));
-      saveToStorage(
+      await saveToStorage(
         "jt_delivery_orders",
         dos.filter((d) => !bigIntEq(d.consignerId ?? 0n, id)),
       );
       // Cascade: remove loading trips linked to removed DOs or directly to consigner
-      const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const trips = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const removedDOIds = removedDOs.map((d) => d.id);
-      saveToStorage(
+      await saveToStorage(
         "jt_loading_trips",
         trips.filter(
           (t) =>
@@ -894,7 +904,7 @@ export function useDeleteConsigner() {
 export function useGetAllConsignees() {
   return useQuery<Consignee[]>({
     queryKey: ["consignees"],
-    queryFn: async () => loadFromStorage<Consignee>("jt_consignees"),
+    queryFn: async () => await loadFromStorage<Consignee>("jt_consignees"),
     // Local storage — no actor needed, always enabled
     staleTime: 0,
   });
@@ -904,9 +914,9 @@ export function useCreateConsignee() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Consignee, "id">) => {
-      const items = loadFromStorage<Consignee>("jt_consignees");
+      const items = await loadFromStorage<Consignee>("jt_consignees");
       const newItem: Consignee = { ...data, id: nextId(items) };
-      saveToStorage("jt_consignees", [...items, newItem]);
+      await saveToStorage("jt_consignees", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -918,8 +928,8 @@ export function useUpdateConsignee() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Consignee) => {
-      const items = loadFromStorage<Consignee>("jt_consignees");
-      saveToStorage(
+      const items = await loadFromStorage<Consignee>("jt_consignees");
+      await saveToStorage(
         "jt_consignees",
         items.map((i) => (i.id === data.id ? data : i)),
       );
@@ -933,8 +943,8 @@ export function useDeleteConsignee() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<Consignee>("jt_consignees");
-      saveToStorage(
+      const items = await loadFromStorage<Consignee>("jt_consignees");
+      await saveToStorage(
         "jt_consignees",
         items.filter((i) => i.id !== id),
       );
@@ -949,7 +959,7 @@ export function useGetAllDeliveryOrders() {
   return useQuery<DeliveryOrder[]>({
     queryKey: ["deliveryOrders"],
     queryFn: async () => {
-      const items = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+      const items = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
       return items.map((item) => ({
         ...item,
         dispatchedQty:
@@ -975,7 +985,7 @@ export function useCreateDeliveryOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<DeliveryOrder, "id" | "dispatchedQty">) => {
-      const items = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+      const items = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
       const id = nextId(items);
       const newItem: DeliveryOrder = {
         ...data,
@@ -986,7 +996,7 @@ export function useCreateDeliveryOrder() {
         shortageRate: data.shortageRate ?? 5000,
         allowOverDispatch: data.allowOverDispatch ?? false,
       };
-      saveToStorage("jt_delivery_orders", [...items, newItem]);
+      await saveToStorage("jt_delivery_orders", [...items, newItem]);
       return id;
     },
     onSuccess: () =>
@@ -998,8 +1008,8 @@ export function useUpdateDeliveryOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: DeliveryOrder) => {
-      const items = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-      saveToStorage(
+      const items = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+      await saveToStorage(
         "jt_delivery_orders",
         items.map((i) => (i.id === data.id ? data : i)),
       );
@@ -1013,32 +1023,35 @@ export function useDeleteDeliveryOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-      saveToStorage(
+      const items = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+      await saveToStorage(
         "jt_delivery_orders",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
       // Cascade: remove loading trips linked to this DO
-      const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const trips = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const removedTrips = trips.filter((t) => bigIntEq(t.doId, id));
-      saveToStorage(
+      await saveToStorage(
         "jt_loading_trips",
         trips.filter((t) => !bigIntEq(t.doId, id)),
       );
       // Cascade: for each removed trip, clean up unloadings, diesel, petty cash
       for (const trip of removedTrips) {
-        const unloadings = loadFromStorage<Unloading>("jt_unloadings");
-        saveToStorage(
+        const unloadings = await loadFromStorage<Unloading>("jt_unloadings");
+        await saveToStorage(
           "jt_unloadings",
           unloadings.filter((u) => !bigIntEq(u.loadingTripId, trip.id)),
         );
-        const diesel = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
-        saveToStorage(
+        const diesel =
+          await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+        await saveToStorage(
           "jt_local_diesel",
           diesel.filter((d) => !(d.remark ?? "").includes(trip.challanNo)),
         );
-        const petty = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
-        saveToStorage(
+        const petty = await loadFromStorage<PettyCashLedger>(
+          "jt_pettycash_ledger",
+        );
+        await saveToStorage(
           "jt_pettycash_ledger",
           petty.filter((p) => !(p.narration ?? "").includes(trip.challanNo)),
         );
@@ -1058,7 +1071,7 @@ export function useDeleteDeliveryOrder() {
 export function useGetAllVehicles() {
   return useQuery<Vehicle[]>({
     queryKey: ["vehicles"],
-    queryFn: async () => loadFromStorage<Vehicle>("jt_vehicles"),
+    queryFn: async () => await loadFromStorage<Vehicle>("jt_vehicles"),
     // Local storage — no actor needed, always enabled
     staleTime: 0,
   });
@@ -1068,9 +1081,9 @@ export function useCreateVehicle() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Vehicle, "id">) => {
-      const items = loadFromStorage<Vehicle>("jt_vehicles");
+      const items = await loadFromStorage<Vehicle>("jt_vehicles");
       const newItem: Vehicle = { ...data, id: nextId(items) };
-      saveToStorage("jt_vehicles", [...items, newItem]);
+      await saveToStorage("jt_vehicles", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vehicles"] }),
@@ -1081,8 +1094,8 @@ export function useUpdateVehicle() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Vehicle) => {
-      const items = loadFromStorage<Vehicle>("jt_vehicles");
-      saveToStorage(
+      const items = await loadFromStorage<Vehicle>("jt_vehicles");
+      await saveToStorage(
         "jt_vehicles",
         items.map((i) => (i.id === data.id ? data : i)),
       );
@@ -1095,14 +1108,14 @@ export function useDeleteVehicle() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<Vehicle>("jt_vehicles");
-      saveToStorage(
+      const items = await loadFromStorage<Vehicle>("jt_vehicles");
+      await saveToStorage(
         "jt_vehicles",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
       // Cascade: remove diesel entries linked to this vehicle
-      const diesel = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
-      saveToStorage(
+      const diesel = await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      await saveToStorage(
         "jt_local_diesel",
         diesel.filter((d) => !bigIntEq(d.truckId, id)),
       );
@@ -1118,7 +1131,7 @@ export function useDeleteVehicle() {
 export function useGetAllLoadingTrips() {
   return useQuery<LoadingTrip[]>({
     queryKey: ["loadingTrips"],
-    queryFn: async () => loadFromStorage<LoadingTrip>("jt_loading_trips"),
+    queryFn: async () => await loadFromStorage<LoadingTrip>("jt_loading_trips"),
     staleTime: 0,
   });
 }
@@ -1127,18 +1140,18 @@ export function useCreateLoadingTrip() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<LoadingTrip, "id" | "tripId">) => {
-      const items = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const items = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const id = nextId(items);
       const newItem: LoadingTrip = {
         ...data,
         id,
         tripId: `LT-${String(Number(id)).padStart(5, "0")}`,
       };
-      saveToStorage("jt_loading_trips", [...items, newItem]);
+      await saveToStorage("jt_loading_trips", [...items, newItem]);
       // Deduct loading qty from the linked DO
       if (data.doId !== 0n) {
-        const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        saveToStorage(
+        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+        await saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
             bigIntEq(d.id, data.doId)
@@ -1164,12 +1177,12 @@ export function useUpdateLoadingTrip() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: LoadingTrip) => {
-      const items = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const items = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const old = items.find((i) => bigIntEq(i.id, data.id));
       // Reverse old deduction
       if (old && old.doId !== 0n) {
-        const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        saveToStorage(
+        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+        await saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
             bigIntEq(d.id, old.doId)
@@ -1186,8 +1199,8 @@ export function useUpdateLoadingTrip() {
       }
       // Apply new deduction
       if (data.doId !== 0n) {
-        const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        saveToStorage(
+        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+        await saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
             bigIntEq(d.id, data.doId)
@@ -1199,7 +1212,7 @@ export function useUpdateLoadingTrip() {
           ),
         );
       }
-      saveToStorage(
+      await saveToStorage(
         "jt_loading_trips",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -1216,12 +1229,12 @@ export function useDeleteLoadingTrip() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<LoadingTrip>("jt_loading_trips");
+      const items = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const trip = items.find((i) => bigIntEq(i.id, id));
       // Reverse the DO deduction before deleting
       if (trip && trip.doId !== 0n) {
-        const dos = loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        saveToStorage(
+        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+        await saveToStorage(
           "jt_delivery_orders",
           dos.map((d) =>
             bigIntEq(d.id, trip.doId)
@@ -1236,36 +1249,39 @@ export function useDeleteLoadingTrip() {
           ),
         );
       }
-      saveToStorage(
+      await saveToStorage(
         "jt_loading_trips",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
       if (trip) {
         // Cascade: remove unloadings linked to this trip
-        const unloadings = loadFromStorage<Unloading>("jt_unloadings");
+        const unloadings = await loadFromStorage<Unloading>("jt_unloadings");
         const removedUnloadings = unloadings.filter((u) =>
           bigIntEq(u.loadingTripId, id),
         );
-        saveToStorage(
+        await saveToStorage(
           "jt_unloadings",
           unloadings.filter((u) => !bigIntEq(u.loadingTripId, id)),
         );
         // Cascade: remove payables linked to removed unloadings
         for (const u of removedUnloadings) {
-          const payables = loadFromStorage<Payable>("jt_payables");
-          saveToStorage(
+          const payables = await loadFromStorage<Payable>("jt_payables");
+          await saveToStorage(
             "jt_payables",
             payables.filter((p) => !bigIntEq(p.unloadingId, u.id)),
           );
         }
         // Cascade: remove diesel entries and petty cash entries by challan no
-        const diesel = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
-        saveToStorage(
+        const diesel =
+          await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+        await saveToStorage(
           "jt_local_diesel",
           diesel.filter((d) => !(d.remark ?? "").includes(trip.challanNo)),
         );
-        const petty = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
-        saveToStorage(
+        const petty = await loadFromStorage<PettyCashLedger>(
+          "jt_pettycash_ledger",
+        );
+        await saveToStorage(
           "jt_pettycash_ledger",
           petty.filter((p) => !(p.narration ?? "").includes(trip.challanNo)),
         );
@@ -1287,7 +1303,7 @@ export function useDeleteLoadingTrip() {
 export function useGetAllUnloadings() {
   return useQuery<Unloading[]>({
     queryKey: ["unloadings"],
-    queryFn: async () => loadFromStorage<Unloading>("jt_unloadings"),
+    queryFn: async () => await loadFromStorage<Unloading>("jt_unloadings"),
     // Local storage — no actor needed, always enabled
     staleTime: 0,
   });
@@ -1297,12 +1313,12 @@ export function useCreateUnloading() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Unloading, "id">) => {
-      const items = loadFromStorage<Unloading>("jt_unloadings");
+      const items = await loadFromStorage<Unloading>("jt_unloadings");
       const newItem: Unloading = { ...data, id: nextId(items) };
-      saveToStorage("jt_unloadings", [...items, newItem]);
+      await saveToStorage("jt_unloadings", [...items, newItem]);
       // Mark the loading trip as unloaded
-      const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
-      saveToStorage(
+      const trips = await loadFromStorage<LoadingTrip>("jt_loading_trips");
+      await saveToStorage(
         "jt_loading_trips",
         trips.map((t) =>
           t.id === data.loadingTripId ? { ...t, status: "unloaded" } : t,
@@ -1312,12 +1328,12 @@ export function useCreateUnloading() {
       if (newItem.netPayableToVehicle > 0) {
         const trip = trips.find((t) => bigIntEq(t.id, data.loadingTripId));
         if (trip) {
-          const vehicles = loadFromStorage<Vehicle>("jt_vehicles");
+          const vehicles = await loadFromStorage<Vehicle>("jt_vehicles");
           const vehicle = vehicles.find((v) => bigIntEq(v.id, trip.vehicleId));
           const vehicleNumber =
             vehicle?.vehicleNumber ?? trip.vehicleId.toString();
           const ownerName = vehicle?.ownerName ?? "";
-          const payables = loadFromStorage<Payable>("jt_payables");
+          const payables = await loadFromStorage<Payable>("jt_payables");
           const existingPayable = payables.find((p) =>
             bigIntEq(p.unloadingId, newItem.id),
           );
@@ -1352,7 +1368,7 @@ export function useCreateUnloading() {
               remarks: "",
               status: "pending",
             };
-            saveToStorage("jt_payables", [...payables, newPayable]);
+            await saveToStorage("jt_payables", [...payables, newPayable]);
           }
         }
       }
@@ -1370,8 +1386,8 @@ export function useUpdateUnloading() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Unloading) => {
-      const items = loadFromStorage<Unloading>("jt_unloadings");
-      saveToStorage(
+      const items = await loadFromStorage<Unloading>("jt_unloadings");
+      await saveToStorage(
         "jt_unloadings",
         items.map((i) => (i.id === data.id ? data : i)),
       );
@@ -1385,16 +1401,16 @@ export function useDeleteUnloading() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<Unloading>("jt_unloadings");
+      const items = await loadFromStorage<Unloading>("jt_unloadings");
       const unloading = items.find((i) => bigIntEq(i.id, id));
-      saveToStorage(
+      await saveToStorage(
         "jt_unloadings",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
       if (unloading) {
         // Reset the matching loading trip status back to "loaded"
-        const trips = loadFromStorage<LoadingTrip>("jt_loading_trips");
-        saveToStorage(
+        const trips = await loadFromStorage<LoadingTrip>("jt_loading_trips");
+        await saveToStorage(
           "jt_loading_trips",
           trips.map((t) =>
             bigIntEq(t.id, unloading.loadingTripId)
@@ -1403,8 +1419,8 @@ export function useDeleteUnloading() {
           ),
         );
         // Remove matching payable
-        const payables = loadFromStorage<Payable>("jt_payables");
-        saveToStorage(
+        const payables = await loadFromStorage<Payable>("jt_payables");
+        await saveToStorage(
           "jt_payables",
           payables.filter((p) => !bigIntEq(p.unloadingId, id)),
         );
@@ -1432,12 +1448,14 @@ export interface LocalDieselEntry {
   source: string; // "manual" | "trip"
   tripRef: string; // trip ID like "LT-00001" if source="trip"
   billNo: string; // Bill number from petrol bunk
+  slipNo: string; // Physical slip number from bunk at time of refueling
 }
 
 export function useGetAllLocalDieselEntries() {
   return useQuery<LocalDieselEntry[]>({
     queryKey: ["localDiesel"],
-    queryFn: async () => loadFromStorage<LocalDieselEntry>("jt_local_diesel"),
+    queryFn: async () =>
+      await loadFromStorage<LocalDieselEntry>("jt_local_diesel"),
     staleTime: 0,
   });
 }
@@ -1446,9 +1464,9 @@ export function useCreateLocalDieselEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<LocalDieselEntry, "id">) => {
-      const items = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      const items = await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
       const newItem: LocalDieselEntry = { ...data, id: nextId(items) };
-      saveToStorage("jt_local_diesel", [...items, newItem]);
+      await saveToStorage("jt_local_diesel", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -1460,8 +1478,8 @@ export function useUpdateLocalDieselEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: LocalDieselEntry) => {
-      const items = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
-      saveToStorage(
+      const items = await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      await saveToStorage(
         "jt_local_diesel",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -1475,8 +1493,8 @@ export function useDeleteLocalDieselEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<LocalDieselEntry>("jt_local_diesel");
-      saveToStorage(
+      const items = await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+      await saveToStorage(
         "jt_local_diesel",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -1502,7 +1520,7 @@ export interface BunkPayment {
 export function useGetAllBunkPayments() {
   return useQuery<BunkPayment[]>({
     queryKey: ["bunkPayments"],
-    queryFn: async () => loadFromStorage<BunkPayment>("jt_bunk_payments"),
+    queryFn: async () => await loadFromStorage<BunkPayment>("jt_bunk_payments"),
     staleTime: 0,
   });
 }
@@ -1511,9 +1529,9 @@ export function useCreateBunkPayment() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<BunkPayment, "id">) => {
-      const items = loadFromStorage<BunkPayment>("jt_bunk_payments");
+      const items = await loadFromStorage<BunkPayment>("jt_bunk_payments");
       const newItem: BunkPayment = { ...data, id: nextId(items) };
-      saveToStorage("jt_bunk_payments", [...items, newItem]);
+      await saveToStorage("jt_bunk_payments", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -1525,8 +1543,8 @@ export function useUpdateBunkPayment() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: BunkPayment) => {
-      const items = loadFromStorage<BunkPayment>("jt_bunk_payments");
-      saveToStorage(
+      const items = await loadFromStorage<BunkPayment>("jt_bunk_payments");
+      await saveToStorage(
         "jt_bunk_payments",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -1540,8 +1558,8 @@ export function useDeleteBunkPayment() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<BunkPayment>("jt_bunk_payments");
-      saveToStorage(
+      const items = await loadFromStorage<BunkPayment>("jt_bunk_payments");
+      await saveToStorage(
         "jt_bunk_payments",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -1569,7 +1587,8 @@ export interface CashBankEntry {
 export function useGetAllCashBankEntries() {
   return useQuery<CashBankEntry[]>({
     queryKey: ["cashBankEntries"],
-    queryFn: async () => loadFromStorage<CashBankEntry>("jt_cash_bank_entries"),
+    queryFn: async () =>
+      await loadFromStorage<CashBankEntry>("jt_cash_bank_entries"),
     staleTime: 0,
   });
 }
@@ -1578,9 +1597,11 @@ export function useCreateCashBankEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<CashBankEntry, "id">) => {
-      const items = loadFromStorage<CashBankEntry>("jt_cash_bank_entries");
+      const items = await loadFromStorage<CashBankEntry>(
+        "jt_cash_bank_entries",
+      );
       const newItem: CashBankEntry = { ...data, id: nextId(items) };
-      saveToStorage("jt_cash_bank_entries", [...items, newItem]);
+      await saveToStorage("jt_cash_bank_entries", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -1592,8 +1613,10 @@ export function useUpdateCashBankEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: CashBankEntry) => {
-      const items = loadFromStorage<CashBankEntry>("jt_cash_bank_entries");
-      saveToStorage(
+      const items = await loadFromStorage<CashBankEntry>(
+        "jt_cash_bank_entries",
+      );
+      await saveToStorage(
         "jt_cash_bank_entries",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -1607,8 +1630,10 @@ export function useDeleteCashBankEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<CashBankEntry>("jt_cash_bank_entries");
-      saveToStorage(
+      const items = await loadFromStorage<CashBankEntry>(
+        "jt_cash_bank_entries",
+      );
+      await saveToStorage(
         "jt_cash_bank_entries",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -1668,8 +1693,10 @@ function calcReceivableStatus(
   return { balance: Math.max(0, balance), status };
 }
 
-export function syncReceivablesFromInvoices(invoices: BillingInvoice[]): void {
-  const existing = loadFromStorage<Receivable>("jt_receivables");
+export async function syncReceivablesFromInvoices(
+  invoices: BillingInvoice[],
+): Promise<void> {
+  const existing = await loadFromStorage<Receivable>("jt_receivables");
   let changed = false;
   const updated = [...existing];
 
@@ -1733,14 +1760,14 @@ export function syncReceivablesFromInvoices(invoices: BillingInvoice[]): void {
   }
 
   if (changed) {
-    saveToStorage("jt_receivables", updated);
+    await saveToStorage("jt_receivables", updated);
   }
 }
 
 export function useGetAllReceivables() {
   return useQuery<Receivable[]>({
     queryKey: ["receivables"],
-    queryFn: async () => loadFromStorage<Receivable>("jt_receivables"),
+    queryFn: async () => await loadFromStorage<Receivable>("jt_receivables"),
     staleTime: 0,
   });
 }
@@ -1749,7 +1776,7 @@ export function useCreateReceivable() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Receivable, "id" | "balance" | "status">) => {
-      const items = loadFromStorage<Receivable>("jt_receivables");
+      const items = await loadFromStorage<Receivable>("jt_receivables");
       const { balance, status } = calcReceivableStatus(
         data.invoiceAmount,
         data.amountReceived,
@@ -1762,7 +1789,7 @@ export function useCreateReceivable() {
         balance,
         status,
       };
-      saveToStorage("jt_receivables", [...items, newItem]);
+      await saveToStorage("jt_receivables", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -1776,7 +1803,7 @@ export function useUpdateReceivable() {
     mutationFn: async (
       data: Omit<Receivable, "balance" | "status"> & { id: bigint },
     ) => {
-      const items = loadFromStorage<Receivable>("jt_receivables");
+      const items = await loadFromStorage<Receivable>("jt_receivables");
       const { balance, status } = calcReceivableStatus(
         data.invoiceAmount,
         data.amountReceived,
@@ -1784,7 +1811,7 @@ export function useUpdateReceivable() {
         data.penaltyAmount,
       );
       const updated: Receivable = { ...data, balance, status };
-      saveToStorage(
+      await saveToStorage(
         "jt_receivables",
         items.map((i) => (bigIntEq(i.id, data.id) ? updated : i)),
       );
@@ -1798,8 +1825,8 @@ export function useDeleteReceivable() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<Receivable>("jt_receivables");
-      saveToStorage(
+      const items = await loadFromStorage<Receivable>("jt_receivables");
+      await saveToStorage(
         "jt_receivables",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -1819,7 +1846,7 @@ export function useAddReceivablePayment() {
       id: bigint;
       payment: ReceivablePayment;
     }) => {
-      const items = loadFromStorage<Receivable>("jt_receivables");
+      const items = await loadFromStorage<Receivable>("jt_receivables");
       const idx = items.findIndex((i) => bigIntEq(i.id, id));
       if (idx < 0) throw new Error("Receivable not found");
       const rec = items[idx];
@@ -1847,7 +1874,7 @@ export function useAddReceivablePayment() {
         status,
       };
       items[idx] = updated;
-      saveToStorage("jt_receivables", items);
+      await saveToStorage("jt_receivables", items);
     },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["receivables"] }),
@@ -1907,12 +1934,12 @@ function calcPayableStatus(
   return { balance: Math.max(0, balance), status };
 }
 
-export function syncPayablesFromUnloadings(
+export async function syncPayablesFromUnloadings(
   unloadings: Unloading[],
   loadingTrips: LoadingTrip[],
   vehicles: Vehicle[],
-): void {
-  const existing = loadFromStorage<Payable>("jt_payables");
+): Promise<void> {
+  const existing = await loadFromStorage<Payable>("jt_payables");
   let changed = false;
   const updated = [...existing];
 
@@ -1966,14 +1993,14 @@ export function syncPayablesFromUnloadings(
   }
 
   if (changed) {
-    saveToStorage("jt_payables", updated);
+    await saveToStorage("jt_payables", updated);
   }
 }
 
 export function useGetAllPayables() {
   return useQuery<Payable[]>({
     queryKey: ["payables"],
-    queryFn: async () => loadFromStorage<Payable>("jt_payables"),
+    queryFn: async () => await loadFromStorage<Payable>("jt_payables"),
     staleTime: 0,
   });
 }
@@ -1982,7 +2009,7 @@ export function useCreatePayable() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Payable, "id" | "balance" | "status">) => {
-      const items = loadFromStorage<Payable>("jt_payables");
+      const items = await loadFromStorage<Payable>("jt_payables");
       const { balance, status } = calcPayableStatus(
         data.totalPayable,
         data.amountPaid,
@@ -1993,7 +2020,7 @@ export function useCreatePayable() {
         balance,
         status,
       };
-      saveToStorage("jt_payables", [...items, newItem]);
+      await saveToStorage("jt_payables", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
@@ -2004,7 +2031,7 @@ export function useUpdatePayable() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<Payable, "balance"> & { id: bigint }) => {
-      const items = loadFromStorage<Payable>("jt_payables");
+      const items = await loadFromStorage<Payable>("jt_payables");
       const { balance, status: autoStatus } = calcPayableStatus(
         data.totalPayable,
         data.amountPaid,
@@ -2015,7 +2042,7 @@ export function useUpdatePayable() {
           ? "payment_requested"
           : autoStatus;
       const updated: Payable = { ...data, balance, status };
-      saveToStorage(
+      await saveToStorage(
         "jt_payables",
         items.map((i) => (bigIntEq(i.id, data.id) ? updated : i)),
       );
@@ -2028,8 +2055,8 @@ export function useDeletePayable() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<Payable>("jt_payables");
-      saveToStorage(
+      const items = await loadFromStorage<Payable>("jt_payables");
+      await saveToStorage(
         "jt_payables",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -2048,7 +2075,7 @@ export function useAddPayablePayment() {
       id: bigint;
       payment: PayablePayment;
     }) => {
-      const items = loadFromStorage<Payable>("jt_payables");
+      const items = await loadFromStorage<Payable>("jt_payables");
       const idx = items.findIndex((i) => bigIntEq(i.id, id));
       if (idx < 0) throw new Error("Payable not found");
       const rec = items[idx];
@@ -2074,7 +2101,7 @@ export function useAddPayablePayment() {
         status,
       };
       items[idx] = updated;
-      saveToStorage("jt_payables", items);
+      await saveToStorage("jt_payables", items);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payables"] }),
   });
@@ -2095,7 +2122,7 @@ export function useGetAllPettyCashLedger() {
   return useQuery<PettyCashLedger[]>({
     queryKey: ["pettycash_ledger"],
     queryFn: async () =>
-      loadFromStorage<PettyCashLedger>("jt_pettycash_ledger"),
+      await loadFromStorage<PettyCashLedger>("jt_pettycash_ledger"),
     staleTime: 0,
   });
 }
@@ -2104,9 +2131,11 @@ export function useCreatePettyCashLedger() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<PettyCashLedger, "id">) => {
-      const items = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
+      const items = await loadFromStorage<PettyCashLedger>(
+        "jt_pettycash_ledger",
+      );
       const newItem: PettyCashLedger = { ...data, id: nextId(items) };
-      saveToStorage("jt_pettycash_ledger", [...items, newItem]);
+      await saveToStorage("jt_pettycash_ledger", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -2118,8 +2147,10 @@ export function useUpdatePettyCashLedger() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: PettyCashLedger) => {
-      const items = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
-      saveToStorage(
+      const items = await loadFromStorage<PettyCashLedger>(
+        "jt_pettycash_ledger",
+      );
+      await saveToStorage(
         "jt_pettycash_ledger",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -2133,8 +2164,10 @@ export function useDeletePettyCashLedger() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<PettyCashLedger>("jt_pettycash_ledger");
-      saveToStorage(
+      const items = await loadFromStorage<PettyCashLedger>(
+        "jt_pettycash_ledger",
+      );
+      await saveToStorage(
         "jt_pettycash_ledger",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -2189,7 +2222,7 @@ export interface PetrolBunk {
 export function useGetAllPetrolBunks() {
   return useQuery<PetrolBunk[]>({
     queryKey: ["petrolBunks"],
-    queryFn: async () => loadFromStorage<PetrolBunk>("jt_petrol_bunks"),
+    queryFn: async () => await loadFromStorage<PetrolBunk>("jt_petrol_bunks"),
     staleTime: 0,
   });
 }
@@ -2198,9 +2231,9 @@ export function useCreatePetrolBunk() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<PetrolBunk, "id">) => {
-      const items = loadFromStorage<PetrolBunk>("jt_petrol_bunks");
+      const items = await loadFromStorage<PetrolBunk>("jt_petrol_bunks");
       const newItem: PetrolBunk = { ...data, id: nextId(items) };
-      saveToStorage("jt_petrol_bunks", [...items, newItem]);
+      await saveToStorage("jt_petrol_bunks", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -2212,8 +2245,8 @@ export function useUpdatePetrolBunk() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: PetrolBunk) => {
-      const items = loadFromStorage<PetrolBunk>("jt_petrol_bunks");
-      saveToStorage(
+      const items = await loadFromStorage<PetrolBunk>("jt_petrol_bunks");
+      await saveToStorage(
         "jt_petrol_bunks",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -2227,8 +2260,8 @@ export function useDeletePetrolBunk() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<PetrolBunk>("jt_petrol_bunks");
-      saveToStorage(
+      const items = await loadFromStorage<PetrolBunk>("jt_petrol_bunks");
+      await saveToStorage(
         "jt_petrol_bunks",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
@@ -2274,7 +2307,9 @@ export function useGetAllBillingInvoices() {
   return useQuery<BillingInvoice[]>({
     queryKey: ["billingInvoices"],
     queryFn: async () => {
-      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
+      const items = await loadFromStorage<BillingInvoice>(
+        "jt_billing_invoices",
+      );
       // Normalise old records that lack multi-trip fields
       return items.map((item) => ({
         ...item,
@@ -2297,9 +2332,11 @@ export function useCreateBillingInvoice() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<BillingInvoice, "id">) => {
-      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
+      const items = await loadFromStorage<BillingInvoice>(
+        "jt_billing_invoices",
+      );
       const newItem: BillingInvoice = { ...data, id: nextId(items) };
-      saveToStorage("jt_billing_invoices", [...items, newItem]);
+      await saveToStorage("jt_billing_invoices", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -2311,8 +2348,10 @@ export function useUpdateBillingInvoice() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: BillingInvoice) => {
-      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
-      saveToStorage(
+      const items = await loadFromStorage<BillingInvoice>(
+        "jt_billing_invoices",
+      );
+      await saveToStorage(
         "jt_billing_invoices",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -2326,14 +2365,16 @@ export function useDeleteBillingInvoice() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<BillingInvoice>("jt_billing_invoices");
-      saveToStorage(
+      const items = await loadFromStorage<BillingInvoice>(
+        "jt_billing_invoices",
+      );
+      await saveToStorage(
         "jt_billing_invoices",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
       // Cascade: remove matching receivable
-      const receivables = loadFromStorage<Receivable>("jt_receivables");
-      saveToStorage(
+      const receivables = await loadFromStorage<Receivable>("jt_receivables");
+      await saveToStorage(
         "jt_receivables",
         receivables.filter((r) => !bigIntEq(r.billingInvoiceId, id)),
       );
@@ -2371,7 +2412,7 @@ export interface TDSRecord {
 export function useGetAllTDSRecords() {
   return useQuery<TDSRecord[]>({
     queryKey: ["tdsRecords"],
-    queryFn: async () => loadFromStorage<TDSRecord>("jt_tds_entries"),
+    queryFn: async () => await loadFromStorage<TDSRecord>("jt_tds_entries"),
     staleTime: 0,
   });
 }
@@ -2380,9 +2421,9 @@ export function useCreateTDSRecord() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: Omit<TDSRecord, "id">) => {
-      const items = loadFromStorage<TDSRecord>("jt_tds_entries");
+      const items = await loadFromStorage<TDSRecord>("jt_tds_entries");
       const newItem: TDSRecord = { ...data, id: nextId(items) };
-      saveToStorage("jt_tds_entries", [...items, newItem]);
+      await saveToStorage("jt_tds_entries", [...items, newItem]);
       return newItem.id;
     },
     onSuccess: () =>
@@ -2394,8 +2435,8 @@ export function useUpdateTDSRecord() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: TDSRecord) => {
-      const items = loadFromStorage<TDSRecord>("jt_tds_entries");
-      saveToStorage(
+      const items = await loadFromStorage<TDSRecord>("jt_tds_entries");
+      await saveToStorage(
         "jt_tds_entries",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
@@ -2409,8 +2450,8 @@ export function useDeleteTDSRecord() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: bigint) => {
-      const items = loadFromStorage<TDSRecord>("jt_tds_entries");
-      saveToStorage(
+      const items = await loadFromStorage<TDSRecord>("jt_tds_entries");
+      await saveToStorage(
         "jt_tds_entries",
         items.filter((i) => !bigIntEq(i.id, id)),
       );

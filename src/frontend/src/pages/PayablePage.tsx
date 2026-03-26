@@ -124,10 +124,13 @@ export default function PayablePage() {
   // Auto-sync payables from unloading records
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — sync only when data counts change
   useEffect(() => {
-    if (unloadings.length > 0 || trips.length > 0) {
-      syncPayablesFromUnloadings(unloadings, trips, vehicles);
-      payablesQuery.refetch();
-    }
+    const run = async () => {
+      if (unloadings.length > 0 || trips.length > 0) {
+        await syncPayablesFromUnloadings(unloadings, trips, vehicles);
+        payablesQuery.refetch();
+      }
+    };
+    run();
   }, [unloadings.length, trips.length, vehicles.length]);
 
   const summaryStats = useMemo(() => {

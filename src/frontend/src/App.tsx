@@ -5,7 +5,7 @@ import Layout from "./components/Layout";
 import SetupProfileModal from "./components/SetupProfileModal";
 import { useActor } from "./hooks/useActor";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
-import { useGetUserProfile } from "./hooks/useQueries";
+import { setERPActor, useGetUserProfile } from "./hooks/useQueries";
 import LoginPage from "./pages/LoginPage";
 
 type Page =
@@ -32,6 +32,13 @@ type Page =
 function AuthenticatedApp() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const { actor } = useActor();
+
+  // Inject actor into shared storage singleton
+  useEffect(() => {
+    if (actor) {
+      setERPActor(actor);
+    }
+  }, [actor]);
 
   // Timeout: after 5 seconds stop blocking on actor init
   const [actorTimedOut, setActorTimedOut] = useState(false);

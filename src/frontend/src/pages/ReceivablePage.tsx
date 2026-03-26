@@ -121,10 +121,13 @@ export default function ReceivablePage() {
   // Auto-sync receivables from invoices whenever invoices change
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — sync only when invoice count changes
   useEffect(() => {
-    if (invoices.length > 0) {
-      syncReceivablesFromInvoices(invoices);
-      receivablesQuery.refetch();
-    }
+    const run = async () => {
+      if (invoices.length > 0) {
+        await syncReceivablesFromInvoices(invoices);
+        receivablesQuery.refetch();
+      }
+    };
+    run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoices.length]);
 

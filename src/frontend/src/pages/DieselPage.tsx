@@ -33,6 +33,7 @@ import {
   FileText,
   Fuel,
   Loader2,
+  Lock,
   Paperclip,
   Pencil,
   Plus,
@@ -65,6 +66,7 @@ interface ManualDieselFormData {
   rate: string;
   remark: string;
   billFile: string;
+  slipNo: string;
 }
 
 const defaultForm: ManualDieselFormData = {
@@ -75,6 +77,7 @@ const defaultForm: ManualDieselFormData = {
   rate: "",
   remark: "",
   billFile: "",
+  slipNo: "",
 };
 
 interface BunkPaymentFormData {
@@ -257,6 +260,7 @@ export default function DieselPage() {
       rate: entry.rate.toString(),
       remark: entry.remark,
       billFile: entry.billFile,
+      slipNo: entry.slipNo ?? "",
     });
     setDialogOpen(true);
   };
@@ -293,6 +297,7 @@ export default function DieselPage() {
       source: "manual",
       tripRef: "",
       billNo: "",
+      slipNo: form.slipNo,
     };
     try {
       if (editingEntry) {
@@ -729,6 +734,9 @@ export default function DieselPage() {
                         Amount
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
+                        Slip No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
                         Bill No
                       </TableHead>
                     </TableRow>
@@ -778,6 +786,9 @@ export default function DieselPage() {
                             <TableCell className="text-xs text-right font-semibold">
                               ₹{(trip.hsdAmount ?? 0).toLocaleString("en-IN")}
                             </TableCell>
+                            <TableCell className="text-xs font-mono">
+                              {dieselEntry?.slipNo || "—"}
+                            </TableCell>
                             <TableCell className="text-xs">
                               {isEditing ? (
                                 <div className="flex items-center gap-1">
@@ -820,19 +831,12 @@ export default function DieselPage() {
                                   </button>
                                 </div>
                               ) : dieselEntry?.billNo ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditBillNoId(trip.tripId);
-                                    setEditBillNoValue(
-                                      dieselEntry.billNo || "",
-                                    );
-                                  }}
-                                  className="text-xs font-mono font-semibold text-green-700 hover:underline"
-                                  data-ocid={`diesel.manual.bill_no_edit.${index + 1}`}
-                                >
-                                  {dieselEntry.billNo}
-                                </button>
+                                <div className="flex items-center gap-1">
+                                  <Lock className="h-3 w-3 text-green-600" />
+                                  <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium font-mono">
+                                    {dieselEntry.billNo}
+                                  </span>
+                                </div>
                               ) : (
                                 <button
                                   type="button"
@@ -914,6 +918,12 @@ export default function DieselPage() {
                         Total
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
+                        Slip No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
+                        Bill No
+                      </TableHead>
+                      <TableHead className="text-xs font-semibold">
                         Remark
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
@@ -930,7 +940,7 @@ export default function DieselPage() {
                       .map((entry, index) => (
                         <TableRow
                           key={entry.id.toString()}
-                          className="table-row-hover"
+                          className={`table-row-hover${entry.billNo ? " bg-green-50/40" : ""}`}
                           data-ocid={`diesel.standalone.item.${index + 1}`}
                         >
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
@@ -947,6 +957,23 @@ export default function DieselPage() {
                           </TableCell>
                           <TableCell className="text-xs text-right font-semibold">
                             ₹{entry.total.toLocaleString("en-IN")}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono font-medium">
+                            {entry.slipNo || "—"}
+                          </TableCell>
+                          <TableCell>
+                            {entry.billNo ? (
+                              <div className="flex items-center gap-1">
+                                <Lock className="h-3 w-3 text-green-600" />
+                                <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">
+                                  {entry.billNo}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                —
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
                             {entry.remark || "—"}
@@ -970,26 +997,35 @@ export default function DieselPage() {
                             )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openEditDialog(entry)}
-                                className="h-7 w-7 p-0"
-                                data-ocid={`diesel.standalone.edit_button.${index + 1}`}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setDeleteConfirm(entry)}
-                                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                                data-ocid={`diesel.standalone.delete_button.${index + 1}`}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
+                            {entry.billNo ? (
+                              <div className="flex items-center justify-end gap-1">
+                                <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span className="text-xs text-muted-foreground">
+                                  Locked
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openEditDialog(entry)}
+                                  className="h-7 w-7 p-0"
+                                  data-ocid={`diesel.standalone.edit_button.${index + 1}`}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setDeleteConfirm(entry)}
+                                  className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                  data-ocid={`diesel.standalone.delete_button.${index + 1}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1325,6 +1361,24 @@ export default function DieselPage() {
               <p className="text-base font-bold font-display mt-1">
                 {formatCurrency(total)}
               </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="slipNo" className="text-xs">
+                Slip No{" "}
+                <span className="text-muted-foreground">
+                  (from bunk receipt)
+                </span>
+              </Label>
+              <Input
+                id="slipNo"
+                placeholder="e.g. 42"
+                value={form.slipNo}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, slipNo: e.target.value }))
+                }
+                className="text-xs"
+                data-ocid="diesel.form.slip_no_input"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="dieselRemark" className="text-xs">

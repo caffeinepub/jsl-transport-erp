@@ -1,33 +1,32 @@
 # Jeen Trade ERP
 
 ## Current State
-- CashBankPage exists with Cash Book and Bank Book tabs using localStorage (`jt_cash_bank_entries`). The Add Entry form works manually but payments recorded in Receivable/Payable do NOT auto-create Cash/Bank entries. No multiple bank account support.
-- TDSPage exists with 3 tabs (Advance Cash TDS, Vehicle Payment TDS, TDS Receivable) using `jt_tds_entries` localStorage. TDS deducted in Receivable/Payable payments does NOT auto-create TDS entries. Manual entry required.
-- DieselPage has Trip HSD Records tab (auto from loading trips) and Manual Bunk Bills tab (separate manual entries). Trip HSD entries from loading do NOT appear in the Manual Bunk Bill tab vehicle-wise for bill number assignment.
+DieselPage has manual diesel entries with fields: vehicle, date, vendor (bunk), litre, rate, total, remark, billFile, billNo, source (manual/trip), tripRef. Bill number is assigned inline per row. No concept of slip number exists.
 
 ## Requested Changes (Diff)
 
 ### Add
-- `bankAccountName` field to `CashBankEntry` interface in useQueries.ts (for multiple bank accounts)
-- When recording a payment in ReceivablePage (client pays us), auto-create a Cash/Bank receipt entry in `jt_cash_bank_entries` with category "Client Receipt", narration = invoice no + client name, mode = Cash or Bank, bankAccountName if bank mode
-- When recording a payment in PayablePage (we pay vehicle), auto-create a Cash/Bank payment entry in `jt_cash_bank_entries` with category "Vehicle Payment", narration = challan no + vehicle no
-- When recording a payment in ReceivablePage with TDS deducted > 0, auto-create a TDS Receivable record in `jt_tds_entries` with tdsType="tds_receivable"
-- When recording a payment in PayablePage with TDS deducted > 0, auto-create a TDS Payable record in `jt_tds_entries` with tdsType="vehicle_payment"
-- New Diesel flow: Manual Bunk Bill tab now shows trip HSD entries (from loading trips via `jt_loading_trips`) grouped vehicle-wise. Each entry shows vehicle no, challan no, bunk name, litres, amount. User can enter bill number inline (from bunk physical bill). Once bill number saved, that entry also shows in Trip HSD Records tab with the bill number.
+- `slipNo` field (string) to `LocalDieselEntry` interface
+- Slip No input in the manual diesel entry form (the physical slip number given by bunk at time of refueling)
+- Slip No column in the manual diesel records table
+- **Bill Number grouping UI**: a separate action to assign one bill number to multiple slips at once (multi-select slips → enter bill number → save). Alternatively, assign bill number per slip inline.
+- Once a bill number is assigned to a slip, that entire row becomes **read-only** (no edit, no delete). Show a lock icon + bill number badge.
+- A locked/billed slip still shows all details (vehicle, date, litre, rate, slip no, bill no) in read-only mode.
 
 ### Modify
-- `CashBankPage.tsx`: Add `bankAccountName` text input field (shown only when book = "bank"). Add a filter dropdown at top to filter by bank account name. Bank entries table shows bankAccountName column. Categories for bank include common transaction types.
-- `ReceivablePage.tsx`: In `handleAddNewPayment`, after `addPayment.mutateAsync` succeeds, auto-save to `jt_cash_bank_entries` (receipt entry) and if tdsDeducted > 0, auto-save to `jt_tds_entries` (tds_receivable).
-- `PayablePage.tsx`: In `handleAddPayablePayment`, after `addPayablePayment.mutateAsync` succeeds, auto-save to `jt_cash_bank_entries` (payment entry). If payment record has TDS deduction, auto-save to `jt_tds_entries` (vehicle_payment).
-- `DieselPage.tsx`: Redesign Manual Bunk Bills tab to show trip HSD entries (all loading trips with hsdAmount > 0) listed vehicle-wise. Add inline bill number entry field per trip. When bill number is saved, update the diesel entry in `jt_local_diesel` with billNo. Remove the concept of completely separate manual entries (or keep them as a sub-section).
-- `useQueries.ts`: Add `bankAccountName?: string` to `CashBankEntry` interface.
+- `LocalDieselEntry` in `useQueries.ts`: add `slipNo: string` field
+- Manual entry form: add Slip No field (required for manual entries)
+- Manual diesel table: add Slip No column; when `billNo` is set, disable Edit/Delete and show read-only lock badge with bill number
+- Bill number assignment: keep existing inline bill-no edit, but once saved it locks the row
 
 ### Remove
 - Nothing removed
 
 ## Implementation Plan
-1. Update `CashBankEntry` interface in useQueries.ts to add `bankAccountName?: string`
-2. Update `CashBankPage.tsx`: add bankAccountName input for bank entries, filter by bank account, show bankAccountName in table
-3. Update `ReceivablePage.tsx`: after successful payment save, write to `jt_cash_bank_entries` (receipt) and `jt_tds_entries` (if tds > 0)
-4. Update `PayablePage.tsx`: after successful payment save, write to `jt_cash_bank_entries` (payment)
-5. Update `DieselPage.tsx`: redesign Manual Bunk Bills tab to show trip HSD entries vehicle-wise with inline bill number assignment; saved bill numbers update the trip diesel entry and show in Trip HSD Records
+1. Add `slipNo: string` to `LocalDieselEntry` interface in `useQueries.ts`
+2. Update `defaultForm` in DieselPage to include `slipNo: ""`
+3. Add Slip No field to the Add Manual Diesel dialog
+4. Update `saveManual` to include slipNo in the saved data
+5. Add Slip No column in the manual table
+6. When `billNo` is non-empty on a row: disable Edit and Delete buttons, show a lock icon, show bill no as a read-only green badge. Row should visually indicate it is locked (e.g. light green background or lock icon).
+7. The existing inline bill-no input/save remains, but once saved (billNo set), the row locks completely.
