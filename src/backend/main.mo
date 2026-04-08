@@ -5,9 +5,11 @@ import Text "mo:core/Text";
 import Iter "mo:core/Iter";
 import Runtime "mo:core/Runtime";
 import Principal "mo:core/Principal";
-import MixinAuthorization "authorization/MixinAuthorization";
-import AccessControl "authorization/access-control";
+import MixinAuthorization "mo:caffeineai-authorization/MixinAuthorization";
+import AccessControl "mo:caffeineai-authorization/access-control";
+import Migration "migration";
 
+(with migration = Migration.run)
 actor {
   let accessControlState = AccessControl.initState();
 
@@ -51,6 +53,7 @@ actor {
   //       jt_pettycash_ledger, jt_tds_entries, jt_cash_bank_entries,
   //       jt_receivables, jt_payables, jt_erp_settings
 
+  // Shared KV store — persists automatically via enhanced orthogonal persistence
   let erpDataStore = Map.empty<Text, Text>();
 
   public shared func setData(key : Text, value : Text) : async () {

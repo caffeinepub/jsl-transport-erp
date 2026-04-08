@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useInternetIdentity } from "@caffeineai/core-infrastructure";
 import {
   Banknote,
   BarChart3,
@@ -23,11 +24,11 @@ import {
   TrendingDown,
   TrendingUp,
   Truck,
+  Users,
   Wallet,
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import type { LoadingTrip, UserProfile } from "../hooks/useQueries";
 import BillingPage from "../pages/BillingPage";
 import CashBankPage from "../pages/CashBankPage";
@@ -45,6 +46,7 @@ import ReportsPage from "../pages/ReportsPage";
 import SettingsPage from "../pages/SettingsPage";
 import TDSPage from "../pages/TDSPage";
 import UnloadingPage from "../pages/UnloadingPage";
+import UserManagementPage from "../pages/UserManagementPage";
 import VehiclesPage from "../pages/VehiclesPage";
 
 type Page =
@@ -56,6 +58,7 @@ type Page =
   | "tds"
   | "reports"
   | "settings"
+  | "user_management"
   | "consigners"
   | "consignees"
   | "delivery_orders"
@@ -206,6 +209,12 @@ const navSections: NavSection[] = [
         icon: Settings,
         ocid: "sidebar.settings.link",
       },
+      {
+        id: "user_management",
+        label: "User Management",
+        icon: Users,
+        ocid: "sidebar.user_management.link",
+      },
     ],
   },
 ];
@@ -219,6 +228,7 @@ const pageLabels: Record<Page, string> = {
   tds: "TDS Management",
   reports: "Reports",
   settings: "Settings",
+  user_management: "User Management",
   consigners: "Consigners (OCP)",
   consignees: "Consignees",
   delivery_orders: "Delivery Orders",
@@ -297,6 +307,8 @@ function PageContent({
       return <ReportsPage />;
     case "settings":
       return <SettingsPage />;
+    case "user_management":
+      return <UserManagementPage />;
     case "consigners":
       return <ConsignersPage />;
     case "consignees":
@@ -444,14 +456,23 @@ export default function Layout({
                 color: "oklch(0.8 0.14 60)",
               }}
             >
-              {userProfile.name.charAt(0).toUpperCase()}
+              {(
+                userProfile.name ??
+                userProfile.displayName ??
+                userProfile.username ??
+                "U"
+              )
+                .charAt(0)
+                .toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
               <p
                 className="truncate text-xs font-semibold"
                 style={{ color: "oklch(0.95 0.01 240)" }}
               >
-                {userProfile.name}
+                {userProfile.name ??
+                  userProfile.displayName ??
+                  userProfile.username}
               </p>
               <p
                 className="text-[10px] truncate"
@@ -511,7 +532,9 @@ export default function Layout({
               className="hidden sm:block text-xs font-medium text-foreground"
               data-ocid="topbar.user_name"
             >
-              {userProfile.name}
+              {userProfile.name ??
+                userProfile.displayName ??
+                userProfile.username}
             </span>
             <Badge
               variant="secondary"

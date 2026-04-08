@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { BookOpen, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { BookOpen, Loader2, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -59,20 +59,23 @@ const defaultForm: LedgerFormData = {
 
 const DEBIT_CATEGORIES = [
   "Vehicle Advance (Cash)",
-  "Toll",
-  "Repair",
-  "Labour",
-  "Fuel",
-  "Office",
-  "Miscellaneous",
-  "Other",
+  "Toll Charges",
+  "Vehicle Repair",
+  "Office Fuel",
+  "Rent",
+  "Electricity",
+  "Water Bill",
+  "DO Expenses",
+  "Courier Charges",
+  "Printing & Stationery",
+  "Other Expenses",
 ];
 const CREDIT_CATEGORIES = [
   "Cash Received",
-  "Bank Transfer",
+  "Bank Transfer Received",
   "Opening Balance",
-  "Recovery",
-  "Other",
+  "Advance Recovery",
+  "Other Income",
 ];
 
 export default function PettyCashLedgerPage() {
@@ -136,7 +139,12 @@ export default function PettyCashLedgerPage() {
 
   const openCreateDialog = () => {
     setEditingEntry(null);
-    setForm(defaultForm);
+    const defaultType = "debit";
+    setForm({
+      ...defaultForm,
+      transactionType: defaultType,
+      category: DEBIT_CATEGORIES[0],
+    });
     setDialogOpen(true);
   };
 
@@ -379,9 +387,37 @@ export default function PettyCashLedgerPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-xs">
-                      <span className="px-2 py-0.5 rounded bg-accent text-accent-foreground text-xs border border-border">
-                        {entry.category}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded bg-accent text-accent-foreground text-xs border border-border">
+                          {entry.category}
+                        </span>
+                        {entry.category === "Vehicle Advance (Cash)" &&
+                          (() => {
+                            const challanMatch =
+                              entry.narration?.match(/Challan:\s*(\S+)/i);
+                            const challanNo = challanMatch
+                              ? challanMatch[1]
+                              : null;
+                            return (
+                              <span
+                                title={
+                                  challanNo
+                                    ? `Read-only: auto-created from Loading Trip Challan ${challanNo}. Cannot be edited or deleted.`
+                                    : "Read-only: auto-created from a Loading Trip cash advance. Cannot be edited or deleted."
+                                }
+                                className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium border"
+                                style={{
+                                  background: "oklch(0.97 0.02 240)",
+                                  color: "oklch(0.4 0.18 240)",
+                                  borderColor: "oklch(0.75 0.1 240)",
+                                }}
+                              >
+                                <Lock className="h-2.5 w-2.5" />
+                                Auto
+                              </span>
+                            );
+                          })()}
+                      </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate">
                       {entry.narration || "-"}
@@ -430,26 +466,51 @@ export default function PettyCashLedgerPage() {
                       {entry.reference || "-"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(entry)}
-                          className="h-7 w-7 p-0"
-                          data-ocid={`pettycash-ledger.edit_button.${index + 1}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(entry)}
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          data-ocid={`pettycash-ledger.delete_button.${index + 1}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+                      {entry.category === "Vehicle Advance (Cash)" ? (
+                        (() => {
+                          const challanMatch =
+                            entry.narration?.match(/Challan:\s*(\S+)/i);
+                          const challanNo = challanMatch
+                            ? challanMatch[1]
+                            : null;
+                          return (
+                            <div
+                              className="flex items-center justify-end gap-1"
+                              title={
+                                challanNo
+                                  ? `Read-only: auto-created from Loading Trip Challan ${challanNo}. Cannot be modified.`
+                                  : "Read-only: auto-created from a Loading Trip cash advance. Cannot be modified."
+                              }
+                            >
+                              <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">
+                                System
+                              </span>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(entry)}
+                            className="h-7 w-7 p-0"
+                            data-ocid={`pettycash-ledger.edit_button.${index + 1}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(entry)}
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            data-ocid={`pettycash-ledger.delete_button.${index + 1}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -489,9 +550,15 @@ export default function PettyCashLedgerPage() {
                 <Label className="text-xs">Transaction Type *</Label>
                 <Select
                   value={form.transactionType}
-                  onValueChange={(v) =>
-                    setForm((p) => ({ ...p, transactionType: v, category: "" }))
-                  }
+                  onValueChange={(v) => {
+                    const cats =
+                      v === "credit" ? CREDIT_CATEGORIES : DEBIT_CATEGORIES;
+                    setForm((p) => ({
+                      ...p,
+                      transactionType: v,
+                      category: cats[0],
+                    }));
+                  }}
                 >
                   <SelectTrigger
                     className="text-xs"

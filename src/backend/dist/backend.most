@@ -1,0 +1,162 @@
+// Version: 3.0.0
+type Data__791452850<K, V> =
+  {var count : Nat__490723111; kvs : [var ?(K, V)]};
+type Internal__8484328<K, V> =
+  {children : [var ?Node__46230540<K, V>]; data : Data__791452850<K, V>};
+type Leaf__809889148<K, V> = {data : Data__791452850<K, V>};
+type Map__158565046<K, V> = Map__297112838<K, V>;
+type Map__297112838<K, V> =
+  {var root : Node__46230540<K, V>; var size : Nat__490723111};
+type Map__605269027<K, V> = Map__158565046<K, V>;
+type Nat__490723111 = Nat__920180692;
+type Nat__920180692 = Nat;
+type Node__46230540<K, V> =
+  {#internal : Internal__8484328<K, V>; #leaf : Leaf__809889148<K, V>};
+type T__153773549 =
+  {
+    associateType : Text;
+    challanNo : Text;
+    clientId : Nat;
+    consignee : Text;
+    consigner : Text;
+    createdBy : Text;
+    doNo : Text;
+    id : Nat;
+    loadingDate : Text;
+    loadingQty : Float;
+    shortage : Float;
+    tpNo : Text;
+    tripId : Text;
+    truckId : Nat;
+    unloadingQty : Float
+  };
+type T__158137398 =
+  {
+    date : Text;
+    id : Nat;
+    litre : Float;
+    rate : Float;
+    total : Float;
+    truckId : Nat;
+    vendor : Text
+  };
+type T__193832904 =
+  {
+    billingAmount : Float;
+    gstAmount : Float;
+    gstPercent : Float;
+    id : Nat;
+    rate : Float;
+    status : Text;
+    totalInvoice : Float;
+    tripId : Nat
+  };
+type T__270141258 =
+  {address : Text; clientName : Text; gstNumber : Text; id : Nat};
+type T__288018522 =
+  {
+    balance : Float;
+    bankDetails : Text;
+    id : Nat;
+    paidAmount : Float;
+    paymentStatus : Text;
+    totalCost : Float;
+    tripId : Nat
+  };
+type T__346283120 =
+  {
+    amount : Float;
+    date : Text;
+    expenseType : Text;
+    id : Nat;
+    remark : Text;
+    truckId : Nat
+  };
+type T__396063181 =
+  {
+    id : Nat;
+    pan : Text;
+    status : Text;
+    tdsAmount : Float;
+    tdsPercent : Float;
+    tripCost : Float;
+    tripId : Nat
+  };
+type T__618344784 =
+  {id : Nat; ownerName : Text; phone : Text; truckNumber : Text};
+type UserProfile__491224006 = {name : Text};
+type UserRole__1054455867 = {#admin; #guest; #user};
+actor ({
+  stable accessControlState :
+    {
+      var adminAssigned : Bool;
+      userRoles : Map__605269027<Principal, UserRole__1054455867>
+    };
+  stable clients :
+    {var root : Node__46230540<Nat, T__270141258>; var size : Nat__490723111};
+  stable dieselEntries :
+    {var root : Node__46230540<Nat, T__158137398>; var size : Nat__490723111};
+  in erpDataStore : Map__605269027<Text, Text>;
+  stable invoices :
+    {var root : Node__46230540<Nat, T__193832904>; var size : Nat__490723111};
+  stable var nextClientId : Nat;
+  stable var nextDieselEntryId : Nat;
+  stable var nextInvoiceId : Nat;
+  stable var nextPaymentId : Nat;
+  stable var nextPettyCashId : Nat;
+  stable var nextTDSEntryId : Nat;
+  stable var nextTripId : Nat;
+  stable var nextTruckId : Nat;
+  stable payments :
+    {var root : Node__46230540<Nat, T__288018522>; var size : Nat__490723111};
+  stable pettyCashEntries :
+    {var root : Node__46230540<Nat, T__346283120>; var size : Nat__490723111};
+  stable tdsEntries :
+    {var root : Node__46230540<Nat, T__396063181>; var size : Nat__490723111};
+  stable trips :
+    {var root : Node__46230540<Nat, T__153773549>; var size : Nat__490723111};
+  stable trucks :
+    {var root : Node__46230540<Nat, T__618344784>; var size : Nat__490723111};
+  stable userProfiles :
+    {
+      var root : Node__46230540<Principal, UserProfile__491224006>;
+      var size : Nat__490723111
+    }
+}, {
+  stable accessControlState :
+    {
+      var adminAssigned : Bool;
+      userRoles : Map__605269027<Principal, UserRole__1054455867>
+    };
+  stable clients :
+    {var root : Node__46230540<Nat, T__270141258>; var size : Nat__490723111};
+  stable dieselEntries :
+    {var root : Node__46230540<Nat, T__158137398>; var size : Nat__490723111};
+  stable erpDataStore :
+    {var root : Node__46230540<Text, Text>; var size : Nat__490723111};
+  stable invoices :
+    {var root : Node__46230540<Nat, T__193832904>; var size : Nat__490723111};
+  stable var nextClientId : Nat;
+  stable var nextDieselEntryId : Nat;
+  stable var nextInvoiceId : Nat;
+  stable var nextPaymentId : Nat;
+  stable var nextPettyCashId : Nat;
+  stable var nextTDSEntryId : Nat;
+  stable var nextTripId : Nat;
+  stable var nextTruckId : Nat;
+  stable payments :
+    {var root : Node__46230540<Nat, T__288018522>; var size : Nat__490723111};
+  stable pettyCashEntries :
+    {var root : Node__46230540<Nat, T__346283120>; var size : Nat__490723111};
+  stable tdsEntries :
+    {var root : Node__46230540<Nat, T__396063181>; var size : Nat__490723111};
+  stable trips :
+    {var root : Node__46230540<Nat, T__153773549>; var size : Nat__490723111};
+  stable trucks :
+    {var root : Node__46230540<Nat, T__618344784>; var size : Nat__490723111};
+  stable userProfiles :
+    {
+      var root : Node__46230540<Principal, UserProfile__491224006>;
+      var size : Nat__490723111
+    }
+}) ;

@@ -19,22 +19,28 @@ import {
 } from "@/components/ui/table";
 import {
   Building2,
+  Download,
   Eye,
   FileText,
   Loader2,
+  Lock,
+  Paperclip,
   Pencil,
   Plus,
+  Printer,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   type Consignee,
+  type DeliveryOrder,
   useCreateConsignee,
   useDeleteConsignee,
   useGetAllConsignees,
+  useGetAllDeliveryOrders,
   useUpdateConsignee,
 } from "../hooks/useQueries";
 
@@ -62,6 +68,10 @@ const defaultForm: ConsigneeFormData = {
   documents: [],
 };
 
+function bigIntEqStr(a: bigint | number, b: bigint | number): boolean {
+  return BigInt(a) === BigInt(b);
+}
+
 function getDocsForConsignee(id: bigint | number): ConsigneeDocument[] {
   try {
     const raw = localStorage.getItem(`jt_consignee_docs_${id}`);
@@ -75,8 +85,16 @@ function saveDocsForConsignee(id: bigint | number, docs: ConsigneeDocument[]) {
   localStorage.setItem(`jt_consignee_docs_${id}`, JSON.stringify(docs));
 }
 
+function getConsigneeUsageCount(
+  consigneeId: bigint | number,
+  dos: DeliveryOrder[],
+): number {
+  return dos.filter((d) => bigIntEqStr(d.consigneeId, consigneeId)).length;
+}
+
 export default function ConsigneesPage() {
   const consigneesQuery = useGetAllConsignees();
+  const dosQuery = useGetAllDeliveryOrders();
   const createConsignee = useCreateConsignee();
   const updateConsignee = useUpdateConsignee();
   const deleteConsignee = useDeleteConsignee();
@@ -89,6 +107,16 @@ export default function ConsigneesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const consignees = consigneesQuery.data ?? [];
+  const dos = dosQuery.data ?? [];
+
+  // Compute usage counts per consignee id
+  const usageMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of consignees) {
+      map.set(c.id.toString(), getConsigneeUsageCount(c.id, dos));
+    }
+    return map;
+  }, [consignees, dos]);
 
   const openCreateDialog = () => {
     setEditingItem(null);
@@ -162,6 +190,14 @@ export default function ConsigneesPage() {
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
+    const useCount = usageMap.get(deleteConfirm.id.toString()) ?? 0;
+    if (useCount > 0) {
+      toast.error(
+        `Cannot delete: "${deleteConfirm.name}" is used in ${useCount} Delivery Order${useCount !== 1 ? "s" : ""}`,
+      );
+      setDeleteConfirm(null);
+      return;
+    }
     try {
       await deleteConsignee.mutateAsync(deleteConfirm.id);
       localStorage.removeItem(`jt_consignee_docs_${deleteConfirm.id}`);
@@ -173,6 +209,10 @@ export default function ConsigneesPage() {
   };
 
   const isSaving = createConsignee.isPending || updateConsignee.isPending;
+
+  const deleteConfirmUsage = deleteConfirm
+    ? (usageMap.get(deleteConfirm.id.toString()) ?? 0)
+    : 0;
 
   return (
     <div className="p-6 space-y-5" data-ocid="consignees.page">
@@ -250,6 +290,7 @@ export default function ConsigneesPage() {
                   <TableHead className="text-xs font-semibold">
                     Documents
                   </TableHead>
+                  <TableHead className="text-xs font-semibold">Usage</TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     Actions
                   </TableHead>
@@ -258,6 +299,8 @@ export default function ConsigneesPage() {
               <TableBody>
                 {consignees.map((item, index) => {
                   const docs = getDocsForConsignee(item.id);
+                  const useCount = usageMap.get(item.id.toString()) ?? 0;
+                  const isLocked = useCount > 0;
                   return (
                     <TableRow
                       key={item.id.toString()}
@@ -285,22 +328,34 @@ export default function ConsigneesPage() {
                             —
                           </span>
                         ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {docs.map((doc) => (
-                              <button
-                                key={doc.name}
-                                type="button"
-                                onClick={() => setPreviewDoc(doc)}
-                                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
-                                title={doc.name}
-                              >
-                                <FileText className="h-3 w-3" />
-                                <span className="max-w-[80px] truncate">
-                                  {doc.name}
-                                </span>
-                              </button>
-                            ))}
+                          <div className="flex flex-wrap gap-1 items-center">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewDoc(docs[0])}
+                              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
+                              title={`${docs.length} document${docs.length !== 1 ? "s" : ""} — click to preview`}
+                              data-ocid={`consignees.docs_badge.${index + 1}`}
+                            >
+                              <Paperclip className="h-2.5 w-2.5" />📎{" "}
+                              {docs.length} doc{docs.length !== 1 ? "s" : ""}
+                            </button>
                           </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {isLocked ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                            title={`In use: referenced in ${useCount} Delivery Order${useCount !== 1 ? "s" : ""} — cannot be deleted`}
+                            data-ocid={`consignees.lock_badge.${index + 1}`}
+                          >
+                            <Lock className="h-2.5 w-2.5" />
+                            {useCount} DO{useCount !== 1 ? "s" : ""}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -318,7 +373,13 @@ export default function ConsigneesPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => setDeleteConfirm(item)}
-                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled={isLocked}
+                            title={
+                              isLocked
+                                ? `Cannot delete: used in ${useCount} Delivery Order${useCount !== 1 ? "s" : ""}`
+                                : "Delete consignee"
+                            }
                             data-ocid={`consignees.delete_button.${index + 1}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -553,9 +614,23 @@ export default function ConsigneesPage() {
                 a.download = previewDoc.name;
                 a.click();
               }}
-              className="text-xs"
+              className="text-xs gap-1"
             >
+              <Download className="h-3.5 w-3.5" />
               Download
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (!previewDoc) return;
+                const win = window.open(previewDoc.dataUrl, "_blank");
+                win?.addEventListener("load", () => win?.print());
+              }}
+              className="text-xs gap-1"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              Print
             </Button>
             <Button
               size="sm"
@@ -581,10 +656,22 @@ export default function ConsigneesPage() {
           <DialogHeader>
             <DialogTitle className="font-display">Delete Consignee</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete{" "}
-            <strong>{deleteConfirm?.name}</strong>? This cannot be undone.
-          </p>
+          {deleteConfirmUsage > 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex items-start gap-2">
+              <Lock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800">
+                <strong>{deleteConfirm?.name}</strong> is referenced in{" "}
+                <strong>{deleteConfirmUsage}</strong> Delivery Order
+                {deleteConfirmUsage !== 1 ? "s" : ""} and cannot be deleted.
+                Remove the associated DOs first.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete{" "}
+              <strong>{deleteConfirm?.name}</strong>? This cannot be undone.
+            </p>
+          )}
           <DialogFooter>
             <Button
               variant="outline"
@@ -592,24 +679,26 @@ export default function ConsigneesPage() {
               className="text-xs"
               data-ocid="consignees.delete_cancel_button"
             >
-              Cancel
+              {deleteConfirmUsage > 0 ? "Close" : "Cancel"}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteConsignee.isPending}
-              className="text-xs"
-              data-ocid="consignees.delete_confirm_button"
-            >
-              {deleteConsignee.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </Button>
+            {deleteConfirmUsage === 0 && (
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={deleteConsignee.isPending}
+                className="text-xs"
+                data-ocid="consignees.delete_confirm_button"
+              >
+                {deleteConsignee.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

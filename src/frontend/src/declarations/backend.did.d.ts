@@ -89,7 +89,7 @@ export type UserRole = { 'admin' : null } |
   { 'user' : null } |
   { 'guest' : null };
 export interface _SERVICE {
-  '_initializeAccessControlWithSecret' : ActorMethod<[string], undefined>,
+  '_initializeAccessControl' : ActorMethod<[], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
   'createClient' : ActorMethod<[string, string, string], bigint>,
   'createDieselEntry' : ActorMethod<
@@ -131,6 +131,7 @@ export interface _SERVICE {
   >,
   'createTruck' : ActorMethod<[string, string, string], bigint>,
   'deleteClient' : ActorMethod<[bigint], undefined>,
+  'deleteData' : ActorMethod<[string], undefined>,
   'deleteDieselEntry' : ActorMethod<[bigint], undefined>,
   'deleteInvoice' : ActorMethod<[bigint], undefined>,
   'deletePayment' : ActorMethod<[bigint], undefined>,
@@ -141,6 +142,7 @@ export interface _SERVICE {
   'getAllClients' : ActorMethod<[], Array<T__7>>,
   'getAllDieselEntries' : ActorMethod<[], Array<T__6>>,
   'getAllInvoices' : ActorMethod<[], Array<T__5>>,
+  'getAllKeys' : ActorMethod<[], Array<string>>,
   'getAllPayments' : ActorMethod<[], Array<T__4>>,
   'getAllPettyCashEntries' : ActorMethod<[], Array<T__3>>,
   'getAllTDSEntries' : ActorMethod<[], Array<T__2>>,
@@ -149,6 +151,7 @@ export interface _SERVICE {
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getClient' : ActorMethod<[bigint], T__7>,
+  'getData' : ActorMethod<[string], [] | [string]>,
   'getDieselEntry' : ActorMethod<[bigint], T__6>,
   'getInvoice' : ActorMethod<[bigint], T__5>,
   'getPayment' : ActorMethod<[bigint], T__4>,
@@ -159,6 +162,7 @@ export interface _SERVICE {
   'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'setData' : ActorMethod<[string, string], undefined>,
   'updateClient' : ActorMethod<[bigint, string, string, string], undefined>,
   'updateDieselEntry' : ActorMethod<
     [bigint, bigint, string, string, number, number, number],

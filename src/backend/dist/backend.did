@@ -1,0 +1,162 @@
+type UserRole = 
+ variant {
+   admin;
+   guest;
+   user;
+ };
+type UserProfile = record {name: text;};
+type T__7 = 
+ record {
+   address: text;
+   clientName: text;
+   gstNumber: text;
+   id: nat;
+ };
+type T__6 = 
+ record {
+   date: text;
+   id: nat;
+   litre: float64;
+   rate: float64;
+   total: float64;
+   truckId: nat;
+   vendor: text;
+ };
+type T__5 = 
+ record {
+   billingAmount: float64;
+   gstAmount: float64;
+   gstPercent: float64;
+   id: nat;
+   rate: float64;
+   status: text;
+   totalInvoice: float64;
+   tripId: nat;
+ };
+type T__4 = 
+ record {
+   balance: float64;
+   bankDetails: text;
+   id: nat;
+   paidAmount: float64;
+   paymentStatus: text;
+   totalCost: float64;
+   tripId: nat;
+ };
+type T__3 = 
+ record {
+   amount: float64;
+   date: text;
+   expenseType: text;
+   id: nat;
+   remark: text;
+   truckId: nat;
+ };
+type T__2 = 
+ record {
+   id: nat;
+   pan: text;
+   status: text;
+   tdsAmount: float64;
+   tdsPercent: float64;
+   tripCost: float64;
+   tripId: nat;
+ };
+type T__1 = 
+ record {
+   associateType: text;
+   challanNo: text;
+   clientId: nat;
+   consignee: text;
+   consigner: text;
+   createdBy: text;
+   doNo: text;
+   id: nat;
+   loadingDate: text;
+   loadingQty: float64;
+   shortage: float64;
+   tpNo: text;
+   tripId: text;
+   truckId: nat;
+   unloadingQty: float64;
+ };
+type T = 
+ record {
+   id: nat;
+   ownerName: text;
+   phone: text;
+   truckNumber: text;
+ };
+service : {
+  _initializeAccessControl: () -> ();
+  assignCallerUserRole: (user: principal, role: UserRole) -> ();
+  createClient: (clientName: text, gstNumber: text, address: text) -> (nat);
+  createDieselEntry: (truckId: nat, date: text, vendor: text, litre: 
+   float64, rate: float64, total: float64) -> (nat);
+  createInvoice: (tripId: nat, rate: float64, billingAmount: float64,
+   gstPercent: float64, gstAmount: float64, totalInvoice: float64, status:
+   text) -> (nat);
+  createPayment: (tripId: nat, totalCost: float64, paidAmount: float64,
+   balance: float64, bankDetails: text, paymentStatus: text) -> (nat);
+  createPettyCash: (truckId: nat, date: text, expenseType: text, amount:
+   float64, remark: text) -> (nat);
+  createTDSEntry: (tripId: nat, tripCost: float64, tdsPercent: float64,
+   tdsAmount: float64, pan: text, status: text) -> (nat);
+  createTrip: (challanNo: text, truckId: nat, clientId: nat, tpNo: text,
+   doNo: text, consigner: text, consignee: text, loadingDate: text,
+   loadingQty: float64, unloadingQty: float64, associateType: text,
+   createdBy: text) -> (nat);
+  createTruck: (truckNumber: text, ownerName: text, phone: text) -> (nat);
+  deleteClient: (id: nat) -> ();
+  deleteData: (key: text) -> ();
+  deleteDieselEntry: (id: nat) -> ();
+  deleteInvoice: (id: nat) -> ();
+  deletePayment: (id: nat) -> ();
+  deletePettyCash: (id: nat) -> ();
+  deleteTDSEntry: (id: nat) -> ();
+  deleteTrip: (id: nat) -> ();
+  deleteTruck: (id: nat) -> ();
+  getAllClients: () -> (vec T__7) query;
+  getAllDieselEntries: () -> (vec T__6) query;
+  getAllInvoices: () -> (vec T__5) query;
+  getAllKeys: () -> (vec text) query;
+  getAllPayments: () -> (vec T__4) query;
+  getAllPettyCashEntries: () -> (vec T__3) query;
+  getAllTDSEntries: () -> (vec T__2) query;
+  getAllTrips: () -> (vec T__1) query;
+  getAllTrucks: () -> (vec T) query;
+  getCallerUserProfile: () -> (opt UserProfile) query;
+  getCallerUserRole: () -> (UserRole) query;
+  getClient: (id: nat) -> (T__7) query;
+  getData: (key: text) -> (opt text) query;
+  getDieselEntry: (id: nat) -> (T__6) query;
+  getInvoice: (id: nat) -> (T__5) query;
+  getPayment: (id: nat) -> (T__4) query;
+  getPettyCash: (id: nat) -> (T__3) query;
+  getTDSEntry: (id: nat) -> (T__2) query;
+  getTrip: (id: nat) -> (T__1) query;
+  getTruck: (id: nat) -> (T) query;
+  getUserProfile: (user: principal) -> (opt UserProfile) query;
+  isCallerAdmin: () -> (bool) query;
+  saveCallerUserProfile: (profile: UserProfile) -> ();
+  setData: (key: text, value: text) -> ();
+  updateClient: (id: nat, clientName: text, gstNumber: text, address:
+   text) -> ();
+  updateDieselEntry: (id: nat, truckId: nat, date: text, vendor: text, litre:
+   float64, rate: float64, total: float64) -> ();
+  updateInvoice: (id: nat, tripId: nat, rate: float64, billingAmount:
+   float64, gstPercent: float64, gstAmount: float64, totalInvoice: float64,
+   status: text) -> ();
+  updatePayment: (id: nat, tripId: nat, totalCost: float64, paidAmount:
+   float64, balance: float64, bankDetails: text, paymentStatus: text) -> ();
+  updatePettyCash: (id: nat, truckId: nat, date: text, expenseType: text,
+   amount: float64, remark: text) -> ();
+  updateTDSEntry: (id: nat, tripId: nat, tripCost: float64, tdsPercent:
+   float64, tdsAmount: float64, pan: text, status: text) -> ();
+  updateTrip: (id: nat, challanNo: text, truckId: nat, clientId: nat, tpNo:
+   text, doNo: text, consigner: text, consignee: text, loadingDate: text,
+   loadingQty: float64, unloadingQty: float64, associateType: text,
+   createdBy: text) -> ();
+  updateTruck: (id: nat, truckNumber: text, ownerName: text, phone: text) ->
+   ();
+}

@@ -100,6 +100,7 @@ export interface backendInterface {
     createTrip(challanNo: string, truckId: bigint, clientId: bigint, tpNo: string, doNo: string, consigner: string, consignee: string, loadingDate: string, loadingQty: number, unloadingQty: number, associateType: string, createdBy: string): Promise<bigint>;
     createTruck(truckNumber: string, ownerName: string, phone: string): Promise<bigint>;
     deleteClient(id: bigint): Promise<void>;
+    deleteData(key: string): Promise<void>;
     deleteDieselEntry(id: bigint): Promise<void>;
     deleteInvoice(id: bigint): Promise<void>;
     deletePayment(id: bigint): Promise<void>;
@@ -110,6 +111,7 @@ export interface backendInterface {
     getAllClients(): Promise<Array<T__7>>;
     getAllDieselEntries(): Promise<Array<T__6>>;
     getAllInvoices(): Promise<Array<T__5>>;
+    getAllKeys(): Promise<Array<string>>;
     getAllPayments(): Promise<Array<T__4>>;
     getAllPettyCashEntries(): Promise<Array<T__3>>;
     getAllTDSEntries(): Promise<Array<T__2>>;
@@ -118,6 +120,7 @@ export interface backendInterface {
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
     getClient(id: bigint): Promise<T__7>;
+    getData(key: string): Promise<string | null>;
     getDieselEntry(id: bigint): Promise<T__6>;
     getInvoice(id: bigint): Promise<T__5>;
     getPayment(id: bigint): Promise<T__4>;
@@ -128,6 +131,7 @@ export interface backendInterface {
     getUserProfile(user: Principal): Promise<UserProfile | null>;
     isCallerAdmin(): Promise<boolean>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    setData(key: string, value: string): Promise<void>;
     updateClient(id: bigint, clientName: string, gstNumber: string, address: string): Promise<void>;
     updateDieselEntry(id: bigint, truckId: bigint, date: string, vendor: string, litre: number, rate: number, total: number): Promise<void>;
     updateInvoice(id: bigint, tripId: bigint, rate: number, billingAmount: number, gstPercent: number, gstAmount: number, totalInvoice: number, status: string): Promise<void>;

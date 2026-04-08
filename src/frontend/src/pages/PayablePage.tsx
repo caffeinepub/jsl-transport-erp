@@ -31,11 +31,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
-  CheckCircle,
+  CheckCircle2,
   CreditCard,
-  Info,
+  History,
   Loader2,
-  Pencil,
+  Lock,
   TrendingDown,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -75,7 +75,7 @@ const defaultNewPayableForm: NewPayablePaymentForm = {
 function getRowClass(status: string) {
   switch (status) {
     case "paid":
-      return "bg-green-50/50 hover:bg-green-50";
+      return "bg-green-50/80 hover:bg-green-50";
     case "partial":
       return "bg-amber-50/50 hover:bg-amber-50";
     case "payment_requested":
@@ -215,32 +215,40 @@ export default function PayablePage() {
     const isFullPayment = amt >= paymentDialog.balance;
     try {
       await addPayablePayment.mutateAsync({ id: paymentDialog.id, payment });
-      // Auto-create Cash/Bank entry
+      // Auto-create Cash/Bank entry with idempotency via sourceRef
       try {
+        const sourceRef = `payable_payment_${payment.id}`;
         const cashBankEntries = JSON.parse(
           localStorage.getItem("jt_cash_bank_entries") || "[]",
         );
-        const maxId = cashBankEntries.reduce(
-          (max: number, e: { id: number }) => Math.max(max, Number(e.id) || 0),
-          0,
+        const alreadyExists = cashBankEntries.some(
+          (e: { sourceRef?: string }) => e.sourceRef === sourceRef,
         );
-        cashBankEntries.push({
-          id: maxId + 1,
-          date: payment.date,
-          book: payment.mode === "Cash" ? "cash" : "bank",
-          transactionType: "payment",
-          category: "Vehicle Payment",
-          amount: payment.amount,
-          narration: `${paymentDialog.vehicleNumber} - ${paymentDialog.tripReference}`,
-          reference: payment.utr || "",
-          bankAccountName: "",
-          createdBy: localStorage.getItem("jt_user_role") || "User",
-          createdDate: new Date().toISOString().split("T")[0],
-        });
-        localStorage.setItem(
-          "jt_cash_bank_entries",
-          JSON.stringify(cashBankEntries),
-        );
+        if (!alreadyExists) {
+          const maxId = cashBankEntries.reduce(
+            (max: number, e: { id: number }) =>
+              Math.max(max, Number(e.id) || 0),
+            0,
+          );
+          cashBankEntries.push({
+            id: maxId + 1,
+            date: payment.date,
+            book: payment.mode === "Cash" ? "cash" : "bank",
+            transactionType: "payment",
+            category: "Vehicle Payment",
+            amount: payment.amount,
+            narration: `${paymentDialog.vehicleNumber} - ${paymentDialog.tripReference}`,
+            reference: payment.utr || "",
+            bankAccountName: "",
+            sourceRef,
+            createdBy: localStorage.getItem("jt_user_role") || "User",
+            createdDate: new Date().toISOString().split("T")[0],
+          });
+          localStorage.setItem(
+            "jt_cash_bank_entries",
+            JSON.stringify(cashBankEntries),
+          );
+        }
       } catch (_) {
         /* silent */
       }
@@ -693,19 +701,24 @@ export default function PayablePage() {
                           </Button>
                         )}
                         {record.status === "paid" && (
-                          <div className="flex items-center justify-end gap-1">
-                            <CheckCircle
-                              className="h-4 w-4"
-                              style={{ color: "oklch(0.4 0.16 150)" }}
-                            />
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full border border-green-400 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700"
+                              title="Full payment made — this trip is closed"
+                            >
+                              <CheckCircle2 className="h-3 w-3" />
+                              Paid
+                            </span>
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => openPaymentDialog(record)}
-                              className="h-7 w-7 p-0"
-                              data-ocid={`payable.edit_button.${index + 1}`}
+                              className="h-7 gap-1 px-2 text-[10px] text-muted-foreground whitespace-nowrap"
+                              title="View payment history"
+                              data-ocid={`payable.history_button.${index + 1}`}
                             >
-                              <Pencil className="h-3.5 w-3.5" />
+                              <History className="h-3 w-3" />
+                              History
                             </Button>
                           </div>
                         )}
@@ -729,7 +742,20 @@ export default function PayablePage() {
           data-ocid="payable.dialog"
         >
           <DialogHeader>
-            <DialogTitle className="font-display">Process Payment</DialogTitle>
+            <DialogTitle className="font-display flex items-center gap-2">
+              {paymentDialog?.status === "paid" ? (
+                <>
+                  <Lock className="h-4 w-4 text-green-600" />
+                  Payment History
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-green-400 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Paid
+                  </span>
+                </>
+              ) : (
+                "Process Payment"
+              )}
+            </DialogTitle>
           </DialogHeader>
           {paymentDialog && (
             <div className="space-y-4">

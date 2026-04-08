@@ -1,0 +1,27 @@
+{
+  "overview": "Jeen Trade ERP is a comprehensive transport logistics management system for Jeen Trade & Exports Pvt Ltd. It handles the full workflow from delivery orders through trip loading/unloading, billing, accounts receivable/payable, diesel management, petty cash, TDS, and financial reporting — all stored in a shared ICP canister for real-time multi-user access.",
+  "features": [
+    "Full trip lifecycle: Delivery Orders → Loading → Unloading → Billing → Receivable/Payable",
+    "Automatic entries: cash advances create Petty Cash debits, HSD creates Diesel records, unloading creates Payables, billing creates Receivables",
+    "Smart record locking: billed records fully locked, post-unloading key fields locked, auto-entries read-only",
+    "Diesel management: slip/bill grouping, bunk reconciliation, bunk payment tracking",
+    "TDS management: 3 types (Advance Cash, Vehicle Payment, TDS Receivable) with PAN-wise summaries",
+    "Cash & Bank module: Cash Book and Bank Book with auto-entries from payments",
+    "Reports with CSV export: Trip, Revenue, Client Billing, Truck Profit, Diesel",
+    "User Management: role assignment, activity log, login history",
+    "Duplicate prevention: unique Challan No, Pass No, DO Number, one unloading per challan",
+    "Role-based access: Admin can edit/delete all; Users can create and view only"
+  ],
+  "category": "productivity",
+  "tags": [
+    "erp",
+    "transport",
+    "logistics",
+    "billing",
+    "accounting",
+    "fleet-management",
+    "tds",
+    "diesel-management"
+  ],
+  "last_updated": "2026-04-08T16:29:37.453Z"
+}

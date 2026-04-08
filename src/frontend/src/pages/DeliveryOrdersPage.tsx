@@ -33,7 +33,9 @@ import {
   Eye,
   FileCheck,
   FileUp,
+  Info,
   Loader2,
+  Lock,
   Pencil,
   Plus,
   Printer,
@@ -73,6 +75,7 @@ interface DOFormData {
   billingRate: string;
   gpsCharges: string;
   shortageRate: string;
+  gstRate: string;
   allowOverDispatch: boolean;
 }
 
@@ -91,6 +94,7 @@ const defaultForm: DOFormData = {
   billingRate: "",
   gpsCharges: "131",
   shortageRate: "5000",
+  gstRate: "",
   allowOverDispatch: false,
 };
 
@@ -161,11 +165,14 @@ function printFile(fileUrl: string) {
       if (win) win.onload = () => win.print();
     }
   } else {
-    // Fallback: try opening and printing
     const win = window.open(fileUrl, "_blank");
     if (win) win.onload = () => win.print();
   }
 }
+
+/** Styles for locked (disabled) fields */
+const lockedFieldClass =
+  "bg-gray-100 text-gray-500 cursor-not-allowed opacity-70";
 
 export default function DeliveryOrdersPage() {
   const dosQuery = useGetAllDeliveryOrders();
@@ -184,6 +191,7 @@ export default function DeliveryOrdersPage() {
     null,
   );
   const [searchQuery, setSearchQuery] = useState("");
+  const [autoFilledConsignee, setAutoFilledConsignee] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const dos = dosQuery.data ?? [];
@@ -191,16 +199,49 @@ export default function DeliveryOrdersPage() {
   const consignees = consigneesQuery.data ?? [];
   const loadingTrips = loadingTripsQuery.data ?? [];
   const billingInvoices = billingInvoicesQuery.data ?? [];
+
   const billedTripIds = new Set<string>(
     billingInvoices.flatMap((inv) =>
       (inv.tripIds ?? []).map((id) => id.toString()),
     ),
   );
-  const isBilledDO = (doId: bigint) => {
+
+  /** Returns true if this DO is included in any billing invoice (via any of its trips) */
+  const isBilledDO = (doId: bigint): boolean => {
     const tripsForDO = loadingTrips.filter(
       (t) => t.doId.toString() === doId.toString(),
     );
     return tripsForDO.some((t) => billedTripIds.has(t.id.toString()));
+  };
+
+  /**
+   * Returns true if ANY loading trip exists for this DO.
+   * When true, rate/consigner/qty fields must be locked.
+   */
+  const isDoLocked = (doId: bigint): boolean => {
+    return loadingTrips.some(
+      (t) =>
+        t.doId?.toString() === doId.toString() ||
+        (t as { doNo?: string }).doNo === doId.toString(),
+    );
+  };
+
+  /** Returns the count of loading trips for a DO */
+  const getTripsCount = (doId: bigint): number => {
+    return loadingTrips.filter((t) => t.doId?.toString() === doId.toString())
+      .length;
+  };
+
+  /** Returns the invoice number for a billed DO (first matching invoice) */
+  const getBilledInvoiceNo = (doId: bigint): string => {
+    const tripsForDO = loadingTrips.filter(
+      (t) => t.doId.toString() === doId.toString(),
+    );
+    const tripIdSet = new Set(tripsForDO.map((t) => t.id.toString()));
+    const inv = billingInvoices.find((inv) =>
+      (inv.tripIds ?? []).some((id) => tripIdSet.has(id.toString())),
+    );
+    return inv?.invoiceNumber ?? "";
   };
 
   // Compute dispatched qty directly from loading trips for accurate real-time values
@@ -232,13 +273,14 @@ export default function DeliveryOrdersPage() {
   const openCreateDialog = () => {
     setEditingItem(null);
     setForm(defaultForm);
+    setAutoFilledConsignee(false);
     setDialogOpen(true);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const maxSize = 5 * 1024 * 1024; // 5MB
+    const maxSize = 5 * 1024 * 1024;
     if (file.size > maxSize) {
       toast.error("File size must be under 5MB");
       return;
@@ -261,7 +303,7 @@ export default function DeliveryOrdersPage() {
       expiryDate: item.expiryDate,
       fileUrl: item.fileUrl,
       fileName:
-        (item as any).fileName ??
+        (item as { fileName?: string }).fileName ??
         (item.fileUrl && !item.fileUrl.startsWith("http")
           ? "Uploaded file"
           : ""),
@@ -276,17 +318,25 @@ export default function DeliveryOrdersPage() {
       billingRate: item.billingRate ? item.billingRate.toString() : "",
       gpsCharges: item.gpsCharges ? item.gpsCharges.toString() : "131",
       shortageRate: item.shortageRate ? item.shortageRate.toString() : "5000",
+      gstRate: (item as { gstRate?: number }).gstRate?.toString() ?? "",
       allowOverDispatch: item.allowOverDispatch ?? false,
     });
     setDialogOpen(true);
   };
 
-  // When a consigner is selected, auto-populate rates as defaults
+  // When a consigner is selected, auto-populate rates AND default consignee
   const handleConsignerChange = (v: string) => {
     const consigner = consigners.find((c) => c.id === BigInt(v));
+    const defaultConsigneeId =
+      (consigner as { defaultConsigneeId?: string })?.defaultConsigneeId ?? "";
     setForm((p) => ({
       ...p,
       consignerId: v,
+      // Auto-fill consignee if consigner has a default mapping and form consignee not yet set
+      consigneeId:
+        defaultConsigneeId && (!p.consigneeId || p.consigneeId === "0")
+          ? defaultConsigneeId
+          : p.consigneeId,
       associationRate: consigner
         ? consigner.associationRate.toString()
         : p.associationRate,
@@ -296,6 +346,8 @@ export default function DeliveryOrdersPage() {
       vendorRate: consigner ? consigner.vendorRate.toString() : p.vendorRate,
       billingRate: consigner ? consigner.billingRate.toString() : p.billingRate,
     }));
+    // Store whether auto-fill was applied for info text
+    setAutoFilledConsignee(!!defaultConsigneeId && true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -322,6 +374,7 @@ export default function DeliveryOrdersPage() {
       billingRate: Number(form.billingRate) || 0,
       gpsCharges: Number(form.gpsCharges) || 131,
       shortageRate: Number(form.shortageRate) || 5000,
+      gstRate: Number(form.gstRate) || 0,
       allowOverDispatch: form.allowOverDispatch,
     };
     try {
@@ -345,8 +398,9 @@ export default function DeliveryOrdersPage() {
   const handleDelete = async () => {
     if (!deleteConfirm) return;
     if (isBilledDO(deleteConfirm.id)) {
+      const invNo = getBilledInvoiceNo(deleteConfirm.id);
       toast.error(
-        "Cannot delete: this DO has trips included in a billing invoice.",
+        `Cannot delete: this DO is included in Invoice${invNo ? ` ${invNo}` : ""}. Bill must be reversed first.`,
       );
       setDeleteConfirm(null);
       return;
@@ -362,8 +416,28 @@ export default function DeliveryOrdersPage() {
 
   const isSaving = createDO.isPending || updateDO.isPending;
 
+  // Whether the currently-edited DO is locked (has trips)
+  const editingIsLocked = editingItem ? isDoLocked(editingItem.id) : false;
+
   const getStatusBadge = (item: DeliveryOrder) => {
     const days = getDaysUntilExpiry(item.expiryDate);
+    const dispatched = getDispatchedQty(item.id);
+    // Over-dispatched: dispatched qty exceeds DO qty
+    if (dispatched > item.doQty && item.allowOverDispatch) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-700 border-purple-200">
+          Over-Dispatched
+        </span>
+      );
+    }
+    // Closed: fully dispatched (within tolerance)
+    if (dispatched >= item.doQty && item.doQty > 0) {
+      return (
+        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700 border-blue-200">
+          Closed
+        </span>
+      );
+    }
     if (item.status === "Expired" || days < 0) {
       return (
         <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium status-pending">
@@ -385,6 +459,10 @@ export default function DeliveryOrdersPage() {
       </span>
     );
   };
+
+  // Delete dialog state: for DOs with trips (but not billed), show cascade warning
+  const deleteTripsCount = deleteConfirm ? getTripsCount(deleteConfirm.id) : 0;
+  const deleteIsBilled = deleteConfirm ? isBilledDO(deleteConfirm.id) : false;
 
   return (
     <div className="p-6 space-y-5" data-ocid="delivery_orders.page">
@@ -512,7 +590,10 @@ export default function DeliveryOrdersPage() {
                         : pct <= 0.1
                           ? "bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-400"
                           : "bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-400";
-                  const fileName = (item as any).fileName || "DO_file";
+                  const fileName =
+                    (item as { fileName?: string }).fileName || "DO_file";
+                  const locked = isDoLocked(item.id);
+                  const tripsCount = getTripsCount(item.id);
                   return (
                     <TableRow
                       key={item.id.toString()}
@@ -520,12 +601,28 @@ export default function DeliveryOrdersPage() {
                       data-ocid={`delivery_orders.item.${index + 1}`}
                     >
                       <TableCell className="text-xs font-mono font-semibold">
-                        {item.doNumber}
-                        {item.allowOverDispatch && (
-                          <span className="ml-1 text-[10px] text-purple-600 font-normal">
-                            (OD)
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {item.doNumber}
+                          {item.allowOverDispatch && (
+                            <span className="text-[10px] text-purple-600 font-normal">
+                              (OD)
+                            </span>
+                          )}
+                          {locked && (
+                            <span
+                              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+                              style={{
+                                background: "oklch(0.97 0.06 80 / 0.9)",
+                                color: "oklch(0.50 0.14 72)",
+                                border: "1px solid oklch(0.80 0.10 72 / 0.6)",
+                              }}
+                              title={`${tripsCount} loading trip(s) recorded — rate fields are locked`}
+                            >
+                              <Lock className="h-2.5 w-2.5" />
+                              Trips Loaded
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs font-medium">
                         {getConsignerName(item.consignerId)}
@@ -652,12 +749,53 @@ export default function DeliveryOrdersPage() {
           data-ocid="delivery_orders.dialog"
         >
           <DialogHeader>
-            <DialogTitle className="font-display">
+            <DialogTitle className="font-display flex items-center gap-2">
               {editingItem
                 ? `Edit ${editingItem.doNumber}`
                 : "Create Delivery Order"}
+              {editingIsLocked && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  style={{
+                    background: "oklch(0.97 0.06 80 / 0.9)",
+                    color: "oklch(0.50 0.14 72)",
+                    border: "1px solid oklch(0.80 0.10 72 / 0.6)",
+                  }}
+                >
+                  <Lock className="h-3 w-3" />
+                  Partially Locked
+                </span>
+              )}
             </DialogTitle>
           </DialogHeader>
+
+          {/* Lock Warning Banner */}
+          {editingIsLocked && (
+            <div
+              className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-xs"
+              style={{
+                background: "oklch(0.97 0.06 80 / 0.7)",
+                border: "1px solid oklch(0.85 0.09 72 / 0.8)",
+                color: "oklch(0.42 0.13 72)",
+              }}
+              data-ocid="delivery_orders.lock_banner"
+            >
+              <Info
+                className="h-4 w-4 mt-0.5 shrink-0"
+                style={{ color: "oklch(0.55 0.14 72)" }}
+              />
+              <div>
+                <p className="font-semibold">Some fields are locked</p>
+                <p className="mt-0.5 opacity-90">
+                  Loading trips exist against this DO. Consigner, Consignee, DO
+                  Quantity, Rates, and GST Rate are locked to protect existing
+                  trip calculations. You can still edit: DO Date, Expiry Date,
+                  Over-Dispatch toggle, file attachment, and Status.
+                </p>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Basic Info */}
             <div className="grid grid-cols-2 gap-4">
@@ -679,39 +817,100 @@ export default function DeliveryOrdersPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">Consigner (OCP) *</Label>
-                <SearchableSelect
-                  value={form.consignerId}
-                  onChange={handleConsignerChange}
-                  placeholder="Search OCP..."
-                  data-ocid="delivery_orders.consigner.select"
-                  options={consigners.map((c) => ({
-                    value: c.id.toString(),
-                    label: `${c.name} (${c.material})`,
-                  }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs">Consignee (Client)</Label>
-                <SearchableSelect
-                  value={form.consigneeId}
-                  onChange={(v) => setForm((p) => ({ ...p, consigneeId: v }))}
-                  placeholder="Search client..."
-                  data-ocid="delivery_orders.consignee.select"
-                  options={[
-                    { value: "0", label: "Not specified" },
-                    ...consignees.map((c) => ({
+                <Label className="text-xs flex items-center gap-1.5">
+                  Consigner (OCP) *
+                  {editingIsLocked && (
+                    <Lock className="h-3 w-3 text-amber-500" />
+                  )}
+                </Label>
+                {editingIsLocked ? (
+                  <div
+                    className={`flex h-9 items-center rounded-md border px-3 text-xs ${lockedFieldClass}`}
+                  >
+                    {consigners.find(
+                      (c) => c.id.toString() === form.consignerId,
+                    )?.name ?? "—"}
+                  </div>
+                ) : (
+                  <SearchableSelect
+                    value={form.consignerId}
+                    onChange={handleConsignerChange}
+                    placeholder="Search OCP..."
+                    data-ocid="delivery_orders.consigner.select"
+                    options={consigners.map((c) => ({
                       value: c.id.toString(),
-                      label: c.name,
-                    })),
-                  ]}
-                />
+                      label: `${c.name} (${c.material})`,
+                    }))}
+                  />
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="do-qty" className="text-xs">
+                <Label className="text-xs flex items-center gap-1.5">
+                  Consignee (Client)
+                  {editingIsLocked && (
+                    <Lock className="h-3 w-3 text-amber-500" />
+                  )}
+                </Label>
+                {editingIsLocked ? (
+                  <div
+                    className={`flex h-9 items-center rounded-md border px-3 text-xs ${lockedFieldClass}`}
+                  >
+                    {form.consigneeId && form.consigneeId !== "0"
+                      ? (consignees.find(
+                          (c) => c.id.toString() === form.consigneeId,
+                        )?.name ?? "—")
+                      : "Not specified"}
+                  </div>
+                ) : (
+                  <SearchableSelect
+                    value={form.consigneeId}
+                    onChange={(v) => {
+                      setForm((p) => ({ ...p, consigneeId: v }));
+                      setAutoFilledConsignee(false);
+                    }}
+                    placeholder="Search client..."
+                    data-ocid="delivery_orders.consignee.select"
+                    options={[
+                      { value: "0", label: "Not specified" },
+                      ...consignees.map((c) => ({
+                        value: c.id.toString(),
+                        label: c.name,
+                      })),
+                    ]}
+                  />
+                )}
+                {/* Auto-fill info message */}
+                {autoFilledConsignee &&
+                  form.consigneeId &&
+                  form.consigneeId !== "0" &&
+                  !editingIsLocked && (
+                    <p className="text-[10px] text-blue-600 flex items-center gap-1 mt-0.5">
+                      <Info className="h-3 w-3 shrink-0" />
+                      Auto-filled from OCP mapping —{" "}
+                      <button
+                        type="button"
+                        className="underline hover:no-underline"
+                        onClick={() => {
+                          setForm((p) => ({ ...p, consigneeId: "" }));
+                          setAutoFilledConsignee(false);
+                        }}
+                      >
+                        clear
+                      </button>
+                    </p>
+                  )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="do-qty"
+                  className="text-xs flex items-center gap-1.5"
+                >
                   DO Quantity (MT) *
+                  {editingIsLocked && (
+                    <Lock className="h-3 w-3 text-amber-500" />
+                  )}
                 </Label>
                 <Input
                   id="do-qty"
@@ -724,7 +923,8 @@ export default function DeliveryOrdersPage() {
                     setForm((p) => ({ ...p, doQty: e.target.value }))
                   }
                   required
-                  className="text-xs"
+                  disabled={editingIsLocked}
+                  className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
                   data-ocid="delivery_orders.qty.input"
                 />
               </div>
@@ -768,6 +968,9 @@ export default function DeliveryOrdersPage() {
                     <SelectItem value="Closed" className="text-xs">
                       Closed
                     </SelectItem>
+                    <SelectItem value="Over-Dispatched" className="text-xs">
+                      Over-Dispatched
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -776,12 +979,27 @@ export default function DeliveryOrdersPage() {
             {/* Rates Configuration */}
             <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-foreground">
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                   Rate Configuration
+                  {editingIsLocked && (
+                    <span
+                      className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                      style={{
+                        background: "oklch(0.97 0.06 80 / 0.9)",
+                        color: "oklch(0.50 0.14 72)",
+                        border: "1px solid oklch(0.80 0.10 72 / 0.6)",
+                      }}
+                    >
+                      <Lock className="h-2.5 w-2.5" />
+                      Locked
+                    </span>
+                  )}
                 </p>
-                <span className="text-[10px] text-muted-foreground">
-                  Auto-filled from OCP master · editable per DO
-                </span>
+                {!editingIsLocked && (
+                  <span className="text-[10px] text-muted-foreground">
+                    Auto-filled from OCP master · editable per DO
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -802,7 +1020,8 @@ export default function DeliveryOrdersPage() {
                         associationRate: e.target.value,
                       }))
                     }
-                    className="text-xs"
+                    disabled={editingIsLocked}
+                    className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
                     data-ocid="delivery_orders.assoc_rate.input"
                   />
                 </div>
@@ -823,7 +1042,8 @@ export default function DeliveryOrdersPage() {
                         nonAssociationRate: e.target.value,
                       }))
                     }
-                    className="text-xs"
+                    disabled={editingIsLocked}
+                    className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
                     data-ocid="delivery_orders.non_assoc_rate.input"
                   />
                 </div>
@@ -841,7 +1061,8 @@ export default function DeliveryOrdersPage() {
                     onChange={(e) =>
                       setForm((p) => ({ ...p, vendorRate: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={editingIsLocked}
+                    className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
                     data-ocid="delivery_orders.vendor_rate.input"
                   />
                 </div>
@@ -859,8 +1080,13 @@ export default function DeliveryOrdersPage() {
                     onChange={(e) =>
                       setForm((p) => ({ ...p, billingRate: e.target.value }))
                     }
-                    className="text-xs font-semibold"
-                    style={{ borderColor: "oklch(0.55 0.16 150 / 0.5)" }}
+                    disabled={editingIsLocked}
+                    className={`text-xs font-semibold ${editingIsLocked ? lockedFieldClass : ""}`}
+                    style={
+                      editingIsLocked
+                        ? undefined
+                        : { borderColor: "oklch(0.55 0.16 150 / 0.5)" }
+                    }
                     data-ocid="delivery_orders.billing_rate.input"
                   />
                 </div>
@@ -878,7 +1104,8 @@ export default function DeliveryOrdersPage() {
                     onChange={(e) =>
                       setForm((p) => ({ ...p, gpsCharges: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={editingIsLocked}
+                    className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
                     data-ocid="delivery_orders.gps_charges.input"
                   />
                 </div>
@@ -896,8 +1123,35 @@ export default function DeliveryOrdersPage() {
                     onChange={(e) =>
                       setForm((p) => ({ ...p, shortageRate: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={editingIsLocked}
+                    className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
                     data-ocid="delivery_orders.shortage_rate.input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="do-gst-rate"
+                    className="text-xs flex items-center gap-1.5"
+                  >
+                    GST Rate (%)
+                    {editingIsLocked && (
+                      <Lock className="h-3 w-3 text-amber-500" />
+                    )}
+                  </Label>
+                  <Input
+                    id="do-gst-rate"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    placeholder="e.g. 18"
+                    value={form.gstRate}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, gstRate: e.target.value }))
+                    }
+                    disabled={editingIsLocked}
+                    className={`text-xs ${editingIsLocked ? lockedFieldClass : ""}`}
+                    data-ocid="delivery_orders.gst_rate.input"
                   />
                 </div>
               </div>
@@ -1029,7 +1283,7 @@ export default function DeliveryOrdersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* Delete Confirm Dialog */}
       <Dialog
         open={!!deleteConfirm}
         onOpenChange={() => setDeleteConfirm(null)}
@@ -1039,40 +1293,134 @@ export default function DeliveryOrdersPage() {
           data-ocid="delivery_orders.delete_dialog"
         >
           <DialogHeader>
-            <DialogTitle className="font-display">
-              Delete Delivery Order
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Delete <strong>{deleteConfirm?.doNumber}</strong>? This cannot be
-            undone.
-          </p>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirm(null)}
-              className="text-xs"
-              data-ocid="delivery_orders.delete_cancel_button"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteDO.isPending}
-              className="text-xs"
-              data-ocid="delivery_orders.delete_confirm_button"
-            >
-              {deleteDO.isPending ? (
+            <DialogTitle className="font-display flex items-center gap-2">
+              {deleteIsBilled ? (
                 <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Deleting...
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  Cannot Delete DO
+                </>
+              ) : deleteTripsCount > 0 ? (
+                <>
+                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  Delete with Cascade
                 </>
               ) : (
-                "Delete"
+                "Delete Delivery Order"
               )}
-            </Button>
-          </DialogFooter>
+            </DialogTitle>
+          </DialogHeader>
+
+          {deleteIsBilled ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong>{deleteConfirm?.doNumber}</strong> cannot be deleted
+                because it is included in a billing invoice.
+              </p>
+              <div
+                className="flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+                style={{
+                  background: "oklch(0.97 0.04 25 / 0.7)",
+                  border: "1px solid oklch(0.88 0.06 25 / 0.8)",
+                  color: "oklch(0.45 0.15 25)",
+                }}
+              >
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                Reverse or void the invoice first before deleting this DO.
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="text-xs w-full"
+                  data-ocid="delivery_orders.delete_cancel_button"
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : deleteTripsCount > 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong>{deleteConfirm?.doNumber}</strong> has{" "}
+                <strong className="text-amber-600">
+                  {deleteTripsCount} loading trip
+                  {deleteTripsCount !== 1 ? "s" : ""}
+                </strong>
+                . Deleting will also remove all linked trips, unloading records,
+                diesel entries, and petty cash entries.
+              </p>
+              <div
+                className="flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+                style={{
+                  background: "oklch(0.97 0.06 80 / 0.7)",
+                  border: "1px solid oklch(0.85 0.09 72 / 0.8)",
+                  color: "oklch(0.42 0.13 72)",
+                }}
+              >
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                This action cannot be undone.
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="text-xs"
+                  data-ocid="delivery_orders.delete_cancel_button"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteDO.isPending}
+                  className="text-xs"
+                  data-ocid="delivery_orders.delete_confirm_button"
+                >
+                  {deleteDO.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    `Delete DO + ${deleteTripsCount} Trip${deleteTripsCount !== 1 ? "s" : ""}`
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Delete <strong>{deleteConfirm?.doNumber}</strong>? This cannot
+                be undone.
+              </p>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="text-xs"
+                  data-ocid="delivery_orders.delete_cancel_button"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteDO.isPending}
+                  className="text-xs"
+                  data-ocid="delivery_orders.delete_confirm_button"
+                >
+                  {deleteDO.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    "Delete"
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

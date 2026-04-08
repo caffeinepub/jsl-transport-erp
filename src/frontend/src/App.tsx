@@ -1,10 +1,10 @@
 import { Toaster } from "@/components/ui/sonner";
+import { useInternetIdentity } from "@caffeineai/core-infrastructure";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import Layout from "./components/Layout";
 import SetupProfileModal from "./components/SetupProfileModal";
 import { useActor } from "./hooks/useActor";
-import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { setERPActor, useGetUserProfile } from "./hooks/useQueries";
 import LoginPage from "./pages/LoginPage";
 
@@ -17,6 +17,7 @@ type Page =
   | "tds"
   | "reports"
   | "settings"
+  | "user_management"
   | "consigners"
   | "consignees"
   | "delivery_orders"

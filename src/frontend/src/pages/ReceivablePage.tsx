@@ -26,11 +26,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
+  CheckCircle2,
+  History,
   Loader2,
+  Lock,
   Paperclip,
   Pencil,
   Trash2,
@@ -75,7 +77,7 @@ const defaultNewPaymentForm: NewPaymentForm = {
 function getRowClass(status: string) {
   switch (status) {
     case "paid":
-      return "bg-green-50/50 hover:bg-green-50";
+      return "bg-green-50/80 hover:bg-green-50";
     case "partial":
       return "bg-amber-50/50 hover:bg-amber-50";
     default:
@@ -86,11 +88,22 @@ function getRowClass(status: string) {
 function getStatusClass(status: string) {
   switch (status) {
     case "paid":
-      return "status-paid";
+      return "bg-green-100 text-green-700 border-green-300";
     case "partial":
       return "status-partial";
     default:
       return "status-pending";
+  }
+}
+
+function getStatusLabel(status: string) {
+  switch (status) {
+    case "paid":
+      return "Cleared";
+    case "partial":
+      return "Partial";
+    default:
+      return "Pending";
   }
 }
 
@@ -217,65 +230,80 @@ export default function ReceivablePage() {
     };
     try {
       await addPayment.mutateAsync({ id: editingRecord.id, payment });
-      // Auto-create Cash/Bank entry
+      // Auto-create Cash/Bank entry with idempotency via sourceRef
       try {
+        const sourceRef = `receivable_payment_${payment.id}`;
         const cashBankEntries = JSON.parse(
           localStorage.getItem("jt_cash_bank_entries") || "[]",
         );
-        const maxId = cashBankEntries.reduce(
-          (max: number, e: { id: number }) => Math.max(max, Number(e.id) || 0),
-          0,
+        const alreadyExists = cashBankEntries.some(
+          (e: { sourceRef?: string }) => e.sourceRef === sourceRef,
         );
-        cashBankEntries.push({
-          id: maxId + 1,
-          date: payment.date,
-          book: payment.mode === "Cash" ? "cash" : "bank",
-          transactionType: "receipt",
-          category: "Client Receipt",
-          amount: payment.amount,
-          narration: `Invoice ${editingRecord.invoiceNumber} - ${editingRecord.clientName}`,
-          reference: payment.reference || "",
-          bankAccountName: "",
-          createdBy: localStorage.getItem("jt_user_role") || "User",
-          createdDate: new Date().toISOString().split("T")[0],
-        });
-        localStorage.setItem(
-          "jt_cash_bank_entries",
-          JSON.stringify(cashBankEntries),
-        );
+        if (!alreadyExists) {
+          const maxId = cashBankEntries.reduce(
+            (max: number, e: { id: number }) =>
+              Math.max(max, Number(e.id) || 0),
+            0,
+          );
+          cashBankEntries.push({
+            id: maxId + 1,
+            date: payment.date,
+            book: payment.mode === "Cash" ? "cash" : "bank",
+            transactionType: "receipt",
+            category: "Client Receipt",
+            amount: payment.amount,
+            narration: `Invoice ${editingRecord.invoiceNumber} - ${editingRecord.clientName}`,
+            reference: payment.reference || "",
+            bankAccountName: "",
+            sourceRef,
+            createdBy: localStorage.getItem("jt_user_role") || "User",
+            createdDate: new Date().toISOString().split("T")[0],
+          });
+          localStorage.setItem(
+            "jt_cash_bank_entries",
+            JSON.stringify(cashBankEntries),
+          );
+        }
       } catch (_) {
         /* silent */
       }
-      // Auto-create TDS entry if TDS deducted
+      // Auto-create TDS entry if TDS deducted (idempotency: check invoiceNo + date)
       if (payment.tdsDeducted > 0) {
         try {
           const tdsEntries = JSON.parse(
             localStorage.getItem("jt_tds_entries") || "[]",
           );
-          const tdsMaxId = tdsEntries.reduce(
-            (max: number, e: { id: number }) =>
-              Math.max(max, Number(e.id) || 0),
-            0,
+          const tdsAlreadyExists = tdsEntries.some(
+            (e: { invoiceNo?: string; entryDate?: string }) =>
+              e.invoiceNo === editingRecord.invoiceNumber &&
+              e.entryDate === payment.date,
           );
-          tdsEntries.push({
-            id: tdsMaxId + 1,
-            tdsType: "tds_receivable",
-            ownerName: editingRecord.clientName,
-            ownerPAN: "",
-            vehicleNo: "",
-            tripId: 0,
-            challanNo: editingRecord.invoiceNumber,
-            advanceAmount: editingRecord.invoiceAmount,
-            tdsRate: 0,
-            tdsAmount: payment.tdsDeducted,
-            entryDate: payment.date,
-            remarks: `TDS from ${editingRecord.clientName} on Invoice ${editingRecord.invoiceNumber}`,
-            status: "received",
-            invoiceNo: editingRecord.invoiceNumber,
-            billAmount: editingRecord.invoiceAmount,
-            referenceNo: payment.reference || "",
-          });
-          localStorage.setItem("jt_tds_entries", JSON.stringify(tdsEntries));
+          if (!tdsAlreadyExists) {
+            const tdsMaxId = tdsEntries.reduce(
+              (max: number, e: { id: number }) =>
+                Math.max(max, Number(e.id) || 0),
+              0,
+            );
+            tdsEntries.push({
+              id: tdsMaxId + 1,
+              tdsType: "tds_receivable",
+              ownerName: editingRecord.clientName,
+              ownerPAN: "",
+              vehicleNo: "",
+              tripId: 0,
+              challanNo: editingRecord.invoiceNumber,
+              advanceAmount: editingRecord.invoiceAmount,
+              tdsRate: 0,
+              tdsAmount: payment.tdsDeducted,
+              entryDate: payment.date,
+              remarks: `TDS from ${editingRecord.clientName} on Invoice ${editingRecord.invoiceNumber}`,
+              status: "received",
+              invoiceNo: editingRecord.invoiceNumber,
+              billAmount: editingRecord.invoiceAmount,
+              referenceNo: payment.reference || "",
+            });
+            localStorage.setItem("jt_tds_entries", JSON.stringify(tdsEntries));
+          }
         } catch (_) {
           /* silent */
         }
@@ -532,9 +560,9 @@ export default function ReceivablePage() {
           <TabsTrigger
             value="paid"
             className="text-xs"
-            data-ocid="receivable.paid.tab"
+            data-ocid="receivable.cleared.tab"
           >
-            Paid ({allRecords.filter((r) => r.status === "paid").length})
+            Cleared ({allRecords.filter((r) => r.status === "paid").length})
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -685,29 +713,54 @@ export default function ReceivablePage() {
                       <span
                         className={`text-xs px-2 py-0.5 rounded border capitalize ${getStatusClass(record.status)}`}
                       >
-                        {record.status}
+                        {getStatusLabel(record.status)}
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(record)}
-                          className="h-7 w-7 p-0"
-                          data-ocid={`receivable.edit_button.${index + 1}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(record)}
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          data-ocid={`receivable.delete_button.${index + 1}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {record.status === "paid" ? (
+                          <>
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full border border-green-400 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 mr-1"
+                              title="All amounts received — this invoice is cleared and closed"
+                            >
+                              <CheckCircle2 className="h-3 w-3" />
+                              Cleared
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditDialog(record)}
+                              className="h-7 w-7 p-0 text-muted-foreground"
+                              title="View payment history (read-only — invoice is cleared)"
+                              data-ocid={`receivable.history_button.${index + 1}`}
+                            >
+                              <History className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditDialog(record)}
+                              className="h-7 w-7 p-0"
+                              title="Record payment"
+                              data-ocid={`receivable.edit_button.${index + 1}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDeleteConfirm(record)}
+                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                              data-ocid={`receivable.delete_button.${index + 1}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -725,7 +778,20 @@ export default function ReceivablePage() {
           data-ocid="receivable.dialog"
         >
           <DialogHeader>
-            <DialogTitle className="font-display">Record Payment</DialogTitle>
+            <DialogTitle className="font-display flex items-center gap-2">
+              {editingRecord?.status === "paid" ? (
+                <>
+                  <Lock className="h-4 w-4 text-green-600" />
+                  Payment History
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-green-400 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Cleared
+                  </span>
+                </>
+              ) : (
+                "Record Payment"
+              )}
+            </DialogTitle>
           </DialogHeader>
           {editingRecord && (
             <div className="space-y-4">
@@ -779,7 +845,7 @@ export default function ReceivablePage() {
                     <span
                       className={`text-xs px-2 py-0.5 rounded border capitalize ${getStatusClass(editingRecord.status)}`}
                     >
-                      {editingRecord.status}
+                      {getStatusLabel(editingRecord.status)}
                     </span>
                   </div>
                 </div>

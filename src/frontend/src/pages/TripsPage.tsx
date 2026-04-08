@@ -25,10 +25,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useInternetIdentity } from "@caffeineai/core-infrastructure";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
   type Trip,
   useCreateTrip,
@@ -265,9 +265,9 @@ export default function TripsPage() {
                       {trip.unloadingQty}
                     </TableCell>
                     <TableCell className="text-xs text-right">
-                      {trip.shortage > 0 ? (
+                      {(trip.shortage ?? 0) > 0 ? (
                         <span className="text-destructive font-medium">
-                          {trip.shortage}
+                          {trip.shortage ?? 0}
                         </span>
                       ) : (
                         <span className="text-muted-foreground">0</span>

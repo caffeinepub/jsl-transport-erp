@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertCircle,
+  AlertTriangle,
   Fuel,
   IndianRupee,
   Package,
@@ -31,6 +32,7 @@ import {
   useGetAllReceivables,
   useGetAllTDSRecords,
   useGetAllUnloadings,
+  useGetAllVehicles,
 } from "../hooks/useQueries";
 import { formatCurrency, formatNumber } from "../utils/format";
 
@@ -148,6 +150,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
   const dieselQuery = useGetAllLocalDieselEntries();
   const pettyCashQuery = useGetAllPettyCashLedger();
   const tdsQuery = useGetAllTDSRecords();
+  const vehiclesQuery = useGetAllVehicles();
 
   const isLoading = loadingTripsQuery.isLoading || unloadingsQuery.isLoading;
 
@@ -157,6 +160,27 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
   const diesel = dieselQuery.data ?? [];
   const pettyCash = pettyCashQuery.data ?? [];
   const tds = tdsQuery.data ?? [];
+  const vehicles = vehiclesQuery.data ?? [];
+
+  // Compute vehicle expiry alerts (own/vendor/rented with docs expiring within 30 days)
+  const expiryAlertCount = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return vehicles
+      .filter((v) => ["own", "vendor", "rented"].includes(v.vehicleType))
+      .filter((v) => {
+        const checks = [v.insuranceExpiry, v.pollutionExpiry, v.fitnessExpiry];
+        return checks.some((d) => {
+          if (!d) return false;
+          const exp = new Date(d);
+          exp.setHours(0, 0, 0, 0);
+          const days = Math.floor(
+            (exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+          );
+          return days <= 30;
+        });
+      }).length;
+  }, [vehicles]);
 
   const currentMonthStr = useMemo(() => {
     const now = new Date();
@@ -375,6 +399,32 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
           onClick={onNavigate ? () => onNavigate("reports") : undefined}
         />
       </div>
+
+      {/* Vehicle Document Expiry Alerts */}
+      {expiryAlertCount > 0 && (
+        <button
+          type="button"
+          className="w-full flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 hover:bg-amber-100 transition-colors text-left"
+          onClick={onNavigate ? () => onNavigate("vehicles") : undefined}
+          data-ocid="dashboard.expiry_alert_card"
+        >
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">
+              ⚠ {expiryAlertCount} vehicle
+              {expiryAlertCount !== 1 ? "s have" : " has"} expired or expiring
+              documents
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Insurance, Pollution Certificate, or Fitness Certificate — expired
+              or expiring within 30 days
+            </p>
+            <p className="text-xs text-amber-600 mt-1 font-medium">
+              Click to view Fleet Management →
+            </p>
+          </div>
+        </button>
+      )}
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

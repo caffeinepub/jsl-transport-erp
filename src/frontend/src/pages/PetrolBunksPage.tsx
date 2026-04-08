@@ -17,13 +17,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Fuel, Loader2, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import {
+  Fuel,
+  Loader2,
+  Lock,
+  MapPin,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
+  type LoadingTrip,
+  type LocalDieselEntry,
   type PetrolBunk,
   useCreatePetrolBunk,
   useDeletePetrolBunk,
+  useGetAllLoadingTrips,
+  useGetAllLocalDieselEntries,
   useGetAllPetrolBunks,
   useUpdatePetrolBunk,
 } from "../hooks/useQueries";
@@ -43,8 +55,26 @@ const defaultForm: PetrolBunkFormData = {
   creditLimit: "0",
 };
 
+function getBunkUsageCount(
+  bunkName: string,
+  trips: LoadingTrip[],
+  dieselEntries: LocalDieselEntry[],
+): number {
+  const nameNorm = bunkName.trim().toLowerCase();
+  const tripCount = trips.filter(
+    (t) =>
+      t.petrolBunkName && t.petrolBunkName.trim().toLowerCase() === nameNorm,
+  ).length;
+  const dieselCount = dieselEntries.filter(
+    (d) => d.vendor && d.vendor.trim().toLowerCase() === nameNorm,
+  ).length;
+  return tripCount + dieselCount;
+}
+
 export default function PetrolBunksPage() {
   const bunksQuery = useGetAllPetrolBunks();
+  const tripsQuery = useGetAllLoadingTrips();
+  const dieselQuery = useGetAllLocalDieselEntries();
   const createBunk = useCreatePetrolBunk();
   const updateBunk = useUpdatePetrolBunk();
   const deleteBunk = useDeletePetrolBunk();
@@ -55,6 +85,20 @@ export default function PetrolBunksPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<PetrolBunk | null>(null);
 
   const bunks = bunksQuery.data ?? [];
+  const trips = tripsQuery.data ?? [];
+  const dieselEntries = dieselQuery.data ?? [];
+
+  // Compute usage counts per bunk name (trips + diesel entries)
+  const usageMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const b of bunks) {
+      map.set(
+        b.id.toString(),
+        getBunkUsageCount(b.bunkName, trips, dieselEntries),
+      );
+    }
+    return map;
+  }, [bunks, trips, dieselEntries]);
 
   const openCreateDialog = () => {
     setEditingItem(null);
@@ -101,6 +145,14 @@ export default function PetrolBunksPage() {
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
+    const useCount = usageMap.get(deleteConfirm.id.toString()) ?? 0;
+    if (useCount > 0) {
+      toast.error(
+        `Cannot delete: "${deleteConfirm.bunkName}" is referenced in ${useCount} record${useCount !== 1 ? "s" : ""}`,
+      );
+      setDeleteConfirm(null);
+      return;
+    }
     try {
       await deleteBunk.mutateAsync(deleteConfirm.id);
       toast.success("Petrol bunk deleted");
@@ -111,6 +163,10 @@ export default function PetrolBunksPage() {
   };
 
   const isSaving = createBunk.isPending || updateBunk.isPending;
+
+  const deleteConfirmUsage = deleteConfirm
+    ? (usageMap.get(deleteConfirm.id.toString()) ?? 0)
+    : 0;
 
   return (
     <div className="p-6 space-y-5" data-ocid="petrol_bunks.page">
@@ -184,71 +240,98 @@ export default function PetrolBunksPage() {
                   <TableHead className="text-xs font-semibold text-right">
                     Credit Limit
                   </TableHead>
+                  <TableHead className="text-xs font-semibold">Usage</TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     Actions
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {bunks.map((item, index) => (
-                  <TableRow
-                    key={item.id.toString()}
-                    className="table-row-hover"
-                    data-ocid={`petrol_bunks.item.${index + 1}`}
-                  >
-                    <TableCell className="text-xs text-muted-foreground">
-                      {index + 1}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Fuel className="h-3.5 w-3.5 text-muted-foreground/60" />
-                        <span className="text-xs font-medium">
-                          {item.bunkName}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {item.location ? (
-                        <span className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          {item.location}
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {item.contact || "—"}
-                    </TableCell>
-                    <TableCell className="text-xs text-right font-medium">
-                      {item.creditLimit > 0
-                        ? formatCurrency(item.creditLimit)
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(item)}
-                          className="h-7 w-7 p-0"
-                          data-ocid={`petrol_bunks.edit_button.${index + 1}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(item)}
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          data-ocid={`petrol_bunks.delete_button.${index + 1}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {bunks.map((item, index) => {
+                  const useCount = usageMap.get(item.id.toString()) ?? 0;
+                  const isLocked = useCount > 0;
+                  return (
+                    <TableRow
+                      key={item.id.toString()}
+                      className="table-row-hover"
+                      data-ocid={`petrol_bunks.item.${index + 1}`}
+                    >
+                      <TableCell className="text-xs text-muted-foreground">
+                        {index + 1}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Fuel className="h-3.5 w-3.5 text-muted-foreground/60" />
+                          <span className="text-xs font-medium">
+                            {item.bunkName}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {item.location ? (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />
+                            {item.location}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {item.contact || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-right font-medium">
+                        {item.creditLimit > 0
+                          ? formatCurrency(item.creditLimit)
+                          : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {isLocked ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                            title={`In use: referenced in ${useCount} record${useCount !== 1 ? "s" : ""} (trips + diesel) — cannot be deleted`}
+                            data-ocid={`petrol_bunks.lock_badge.${index + 1}`}
+                          >
+                            <Lock className="h-2.5 w-2.5" />
+                            {useCount} record{useCount !== 1 ? "s" : ""}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(item)}
+                            className="h-7 w-7 p-0"
+                            data-ocid={`petrol_bunks.edit_button.${index + 1}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(item)}
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled={isLocked}
+                            title={
+                              isLocked
+                                ? `Cannot delete: referenced in ${useCount} record${useCount !== 1 ? "s" : ""}`
+                                : "Delete petrol bunk"
+                            }
+                            data-ocid={`petrol_bunks.delete_button.${index + 1}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -374,10 +457,23 @@ export default function PetrolBunksPage() {
               Delete Petrol Bunk
             </DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Delete <strong>{deleteConfirm?.bunkName}</strong>? This cannot be
-            undone.
-          </p>
+          {deleteConfirmUsage > 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex items-start gap-2">
+              <Lock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800">
+                <strong>{deleteConfirm?.bunkName}</strong> is referenced in{" "}
+                <strong>{deleteConfirmUsage}</strong> record
+                {deleteConfirmUsage !== 1 ? "s" : ""} (loading trips and/or
+                diesel entries) and cannot be deleted. Remove those records
+                first.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Delete <strong>{deleteConfirm?.bunkName}</strong>? This cannot be
+              undone.
+            </p>
+          )}
           <DialogFooter>
             <Button
               variant="outline"
@@ -385,24 +481,26 @@ export default function PetrolBunksPage() {
               className="text-xs"
               data-ocid="petrol_bunks.delete_cancel_button"
             >
-              Cancel
+              {deleteConfirmUsage > 0 ? "Close" : "Cancel"}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteBunk.isPending}
-              className="text-xs"
-              data-ocid="petrol_bunks.delete_confirm_button"
-            >
-              {deleteBunk.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </Button>
+            {deleteConfirmUsage === 0 && (
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={deleteBunk.isPending}
+                className="text-xs"
+                data-ocid="petrol_bunks.delete_confirm_button"
+              >
+                {deleteBunk.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { useInternetIdentity } from "@caffeineai/core-infrastructure";
 import { Loader2 } from "lucide-react";
-import { useInternetIdentity } from "../hooks/useInternetIdentity";
 
 const LOGO_SRC = "/assets/uploads/ChatGPT-Image-Mar-7-2026-02_18_24-PM-1.png";
 const TRUCK_IMG_SRC =

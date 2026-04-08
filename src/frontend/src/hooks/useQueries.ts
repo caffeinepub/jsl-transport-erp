@@ -1,28 +1,87 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  T__7 as Client,
-  T__6 as DieselEntry,
-  T__5 as Invoice,
-  T__4 as Payment,
-  T__3 as PettyCash,
-  T__2 as TDSEntry,
-  T__1 as Trip,
-  T as Truck,
-  UserProfile,
-} from "../backend.d";
 import { useActor } from "./useActor";
 
-export type {
-  Truck,
-  Trip,
-  TDSEntry,
-  PettyCash,
-  Payment,
-  Invoice,
-  DieselEntry,
-  Client,
-  UserProfile,
-};
+// Legacy backend types - defined locally since backend is empty
+export interface Truck {
+  id: bigint;
+  truckNumber: string;
+  ownerName: string;
+  phone: string;
+}
+export interface Client {
+  id: bigint;
+  clientName: string;
+  gstNumber: string;
+  address: string;
+}
+export interface Trip {
+  id: bigint;
+  challanNo: string;
+  truckId: bigint;
+  clientId: bigint;
+  tpNo: string;
+  doNo: string;
+  consigner: string;
+  consignee: string;
+  loadingDate: string;
+  loadingQty: number;
+  unloadingQty: number;
+  associateType: string;
+  createdBy: string;
+  tripId?: string;
+  shortage?: number;
+}
+export interface Invoice {
+  id: bigint;
+  tripId: bigint;
+  rate: number;
+  billingAmount: number;
+  gstPercent: number;
+  gstAmount: number;
+  totalInvoice: number;
+  status: string;
+}
+export interface DieselEntry {
+  id: bigint;
+  truckId: bigint;
+  date: string;
+  vendor: string;
+  litre: number;
+  rate: number;
+  total: number;
+}
+export interface PettyCash {
+  id: bigint;
+  truckId: bigint;
+  date: string;
+  expenseType: string;
+  amount: number;
+  remark: string;
+}
+export interface Payment {
+  id: bigint;
+  tripId: bigint;
+  totalCost: number;
+  paidAmount: number;
+  balance: number;
+  bankDetails: string;
+  paymentStatus: string;
+}
+export interface TDSEntry {
+  id: bigint;
+  tripId: bigint;
+  tripCost: number;
+  tdsPercent: number;
+  tdsAmount: number;
+  pan: string;
+  status: string;
+}
+export interface UserProfile {
+  username: string;
+  role: string;
+  displayName: string;
+  name?: string;
+}
 
 // =================== TRUCKS ===================
 export function useGetAllTrucks() {
@@ -776,19 +835,42 @@ async function loadFromStorage<T>(key: string): Promise<T[]> {
       return BigInt(v.slice(0, -1));
     return v;
   };
-  try {
-    if (_erpActor) {
-      const raw: [string] | [] = await _erpActor.getData(key);
-      if (!raw || raw.length === 0) return [];
-      return JSON.parse(raw[0], reviver) as T[];
+  const parseRaw = (raw: string): T[] => {
+    try {
+      return JSON.parse(raw, reviver) as T[];
+    } catch {
+      return [];
     }
-    // Fallback to localStorage if actor not ready
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    return JSON.parse(raw, reviver) as T[];
-  } catch {
-    return [];
+  };
+  // Try actor first
+  if (_erpActor) {
+    try {
+      const raw: [string] | [] = await _erpActor.getData(key);
+      if (raw && raw.length > 0 && raw[0]) {
+        const canisterData = parseRaw(raw[0]);
+        if (canisterData.length > 0) {
+          // Also keep localStorage in sync
+          localStorage.setItem(key, raw[0]);
+          return canisterData;
+        }
+      }
+    } catch {
+      // actor call failed, fall through to localStorage
+    }
   }
+  // Fallback to localStorage
+  const raw = localStorage.getItem(key);
+  if (!raw) return [];
+  const localData = parseRaw(raw);
+  // If we have local data but actor is ready (canister returned empty), push local data to canister
+  if (localData.length > 0 && _erpActor) {
+    try {
+      await _erpActor.setData(key, raw);
+    } catch {
+      /* ignore */
+    }
+  }
+  return localData;
 }
 
 async function saveToStorage<T>(key: string, data: T[]): Promise<void> {
@@ -796,10 +878,15 @@ async function saveToStorage<T>(key: string, data: T[]): Promise<void> {
     if (typeof v === "bigint") return `${v}n`;
     return v;
   });
+  // Always write to localStorage immediately as backup
+  localStorage.setItem(key, serialized);
+  // Also write to canister if actor ready
   if (_erpActor) {
-    await _erpActor.setData(key, serialized);
-  } else {
-    localStorage.setItem(key, serialized);
+    try {
+      await _erpActor.setData(key, serialized);
+    } catch {
+      // localStorage backup already saved above, so data is not lost
+    }
   }
 }
 
@@ -1136,6 +1223,39 @@ export function useGetAllLoadingTrips() {
   });
 }
 
+/** Recalculate and update DO status based on all trips dispatched qty */
+async function updateDOStatusFromTrips(doId: bigint): Promise<void> {
+  if (doId === 0n) return;
+  const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
+  const do_ = dos.find((d) => bigIntEq(d.id, doId));
+  if (!do_) return;
+  const allTrips = await loadFromStorage<LoadingTrip>("jt_loading_trips");
+  const dispatchedQty = allTrips
+    .filter((t) => bigIntEq(t.doId, doId))
+    .reduce((sum, t) => sum + (Number(t.loadingQty) || 0), 0);
+  let newStatus = do_.status;
+  if (dispatchedQty > do_.doQty && do_.allowOverDispatch) {
+    newStatus = "Over-Dispatched";
+  } else if (dispatchedQty >= do_.doQty && !do_.allowOverDispatch) {
+    newStatus = "Closed";
+  } else if (dispatchedQty < do_.doQty) {
+    // Revert to Active unless expired
+    const today = new Date();
+    const expiry = do_.expiryDate ? new Date(do_.expiryDate) : null;
+    if (expiry && expiry < today) {
+      newStatus = "Expired";
+    } else if (newStatus === "Closed" || newStatus === "Over-Dispatched") {
+      newStatus = "Active";
+    }
+  }
+  await saveToStorage(
+    "jt_delivery_orders",
+    dos.map((d) =>
+      bigIntEq(d.id, doId) ? { ...d, dispatchedQty, status: newStatus } : d,
+    ),
+  );
+}
+
 export function useCreateLoadingTrip() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -1148,20 +1268,61 @@ export function useCreateLoadingTrip() {
         tripId: `LT-${String(Number(id)).padStart(5, "0")}`,
       };
       await saveToStorage("jt_loading_trips", [...items, newItem]);
-      // Deduct loading qty from the linked DO
+      // Update DO dispatched qty and status
       if (data.doId !== 0n) {
-        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        await saveToStorage(
-          "jt_delivery_orders",
-          dos.map((d) =>
-            bigIntEq(d.id, data.doId)
-              ? {
-                  ...d,
-                  dispatchedQty: (d.dispatchedQty ?? 0) + data.loadingQty,
-                }
-              : d,
-          ),
+        await updateDOStatusFromTrips(data.doId);
+      }
+      // Auto-create Petty Cash entry for cash advance (idempotency: check challanNo + category)
+      if ((data.advanceCash ?? 0) > 0 && data.challanNo) {
+        const petty = await loadFromStorage<PettyCashLedger>(
+          "jt_pettycash_ledger",
         );
+        const alreadyExists = petty.some(
+          (p) =>
+            p.category === "Vehicle Advance (Cash)" &&
+            (p.narration ?? "").includes(data.challanNo),
+        );
+        if (!alreadyExists) {
+          const newPetty: PettyCashLedger = {
+            id: nextId(petty),
+            date: data.loadingDate,
+            transactionType: "debit",
+            category: "Vehicle Advance (Cash)",
+            narration: `Cash advance — ${data.challanNo}`,
+            amount: data.advanceCash,
+            reference: data.challanNo,
+          };
+          await saveToStorage("jt_pettycash_ledger", [...petty, newPetty]);
+        }
+      }
+      // Auto-create Diesel entry for HSD (idempotency: check source=trip + challanNo)
+      if ((data.hsdAmount ?? 0) > 0 && data.petrolBunkName && data.challanNo) {
+        const diesel =
+          await loadFromStorage<LocalDieselEntry>("jt_local_diesel");
+        const alreadyExists = diesel.some(
+          (d) =>
+            d.source === "trip" && (d.remark ?? "").includes(data.challanNo),
+        );
+        if (!alreadyExists) {
+          const vehicles = await loadFromStorage<Vehicle>("jt_vehicles");
+          const vehicle = vehicles.find((v) => bigIntEq(v.id, data.vehicleId));
+          const newDiesel: LocalDieselEntry = {
+            id: nextId(diesel),
+            truckId: data.vehicleId,
+            date: data.loadingDate,
+            vendor: data.petrolBunkName,
+            litre: data.hsdLitres ?? 0,
+            rate: 0,
+            total: data.hsdAmount,
+            billFile: "",
+            remark: `Trip ${data.challanNo}${vehicle ? ` — ${vehicle.vehicleNumber}` : ""}`,
+            source: "trip",
+            tripRef: `LT-${String(Number(id)).padStart(5, "0")}`,
+            billNo: "",
+            slipNo: "",
+          };
+          await saveToStorage("jt_local_diesel", [...diesel, newDiesel]);
+        }
       }
       return id;
     },
@@ -1169,6 +1330,8 @@ export function useCreateLoadingTrip() {
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
       queryClient.invalidateQueries({ queryKey: ["deliveryOrders"] });
       queryClient.refetchQueries({ queryKey: ["deliveryOrders"] });
+      queryClient.invalidateQueries({ queryKey: ["pettycash_ledger"] });
+      queryClient.invalidateQueries({ queryKey: ["localDiesel"] });
     },
   });
 }
@@ -1179,43 +1342,16 @@ export function useUpdateLoadingTrip() {
     mutationFn: async (data: LoadingTrip) => {
       const items = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const old = items.find((i) => bigIntEq(i.id, data.id));
-      // Reverse old deduction
-      if (old && old.doId !== 0n) {
-        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        await saveToStorage(
-          "jt_delivery_orders",
-          dos.map((d) =>
-            bigIntEq(d.id, old.doId)
-              ? {
-                  ...d,
-                  dispatchedQty: Math.max(
-                    0,
-                    (d.dispatchedQty ?? 0) - old.loadingQty,
-                  ),
-                }
-              : d,
-          ),
-        );
-      }
-      // Apply new deduction
-      if (data.doId !== 0n) {
-        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        await saveToStorage(
-          "jt_delivery_orders",
-          dos.map((d) =>
-            bigIntEq(d.id, data.doId)
-              ? {
-                  ...d,
-                  dispatchedQty: (d.dispatchedQty ?? 0) + data.loadingQty,
-                }
-              : d,
-          ),
-        );
-      }
       await saveToStorage(
         "jt_loading_trips",
         items.map((i) => (bigIntEq(i.id, data.id) ? data : i)),
       );
+      // Recalculate DO status for old DO (if DO changed)
+      const oldDoId = old?.doId ?? 0n;
+      const newDoId = data.doId;
+      if (oldDoId !== 0n) await updateDOStatusFromTrips(oldDoId);
+      if (newDoId !== 0n && newDoId !== oldDoId)
+        await updateDOStatusFromTrips(newDoId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["loadingTrips"] });
@@ -1231,28 +1367,14 @@ export function useDeleteLoadingTrip() {
     mutationFn: async (id: bigint) => {
       const items = await loadFromStorage<LoadingTrip>("jt_loading_trips");
       const trip = items.find((i) => bigIntEq(i.id, id));
-      // Reverse the DO deduction before deleting
-      if (trip && trip.doId !== 0n) {
-        const dos = await loadFromStorage<DeliveryOrder>("jt_delivery_orders");
-        await saveToStorage(
-          "jt_delivery_orders",
-          dos.map((d) =>
-            bigIntEq(d.id, trip.doId)
-              ? {
-                  ...d,
-                  dispatchedQty: Math.max(
-                    0,
-                    (d.dispatchedQty ?? 0) - trip.loadingQty,
-                  ),
-                }
-              : d,
-          ),
-        );
-      }
       await saveToStorage(
         "jt_loading_trips",
         items.filter((i) => !bigIntEq(i.id, id)),
       );
+      // Recalculate DO status after deletion
+      if (trip && trip.doId !== 0n) {
+        await updateDOStatusFromTrips(trip.doId);
+      }
       if (trip) {
         // Cascade: remove unloadings linked to this trip
         const unloadings = await loadFromStorage<Unloading>("jt_unloadings");
@@ -1582,6 +1704,7 @@ export interface CashBankEntry {
   bankAccountName?: string;
   createdBy: string;
   createdDate: string;
+  sourceRef?: string; // idempotency key: e.g. "receivable_payment_{paymentId}"
 }
 
 export function useGetAllCashBankEntries() {
@@ -2179,31 +2302,34 @@ export function useDeletePettyCashLedger() {
 
 // =================== USER PROFILE ===================
 export function useGetUserProfile() {
-  const { actor } = useActor();
   return useQuery<UserProfile | null>({
     queryKey: ["userProfile"],
     queryFn: async () => {
-      if (!actor) return null;
-      return actor.getCallerUserProfile();
+      const raw = localStorage.getItem("jt_user_profile");
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as UserProfile;
+      } catch {
+        return null;
+      }
     },
-    // Only gate on actor being present — do NOT gate on isFetching.
-    // isFetching stays true while _initializeAccessControlWithSecret runs,
-    // which would deadlock the profile query and leave App.tsx in an infinite loading state.
-    enabled: !!actor,
-    // Keep profile data fresh for 10 minutes — no need to re-fetch on every page visit
     staleTime: 10 * 60 * 1000,
-    // Don't refetch on window focus — profile rarely changes
     refetchOnWindowFocus: false,
   });
 }
 
 export function useSaveUserProfile() {
-  const { actor } = useActor();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (profile: UserProfile) => {
-      if (!actor) throw new Error("Actor not available");
-      return actor.saveCallerUserProfile(profile);
+    mutationFn: async (profile: { name: string; role?: string }) => {
+      const saved: UserProfile = {
+        username: profile.name,
+        displayName: profile.name,
+        name: profile.name,
+        role: profile.role ?? localStorage.getItem("jt_user_role") ?? "User",
+      };
+      localStorage.setItem("jt_user_profile", JSON.stringify(saved));
+      return saved;
     },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["userProfile"] }),

@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -18,6 +17,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
+  AlertTriangle,
   ChevronDown,
   CreditCard,
   Download,
@@ -25,6 +25,7 @@ import {
   FileCheck,
   FileUp,
   Loader2,
+  Lock,
   Pencil,
   Plus,
   Printer,
@@ -33,19 +34,24 @@ import {
   Truck,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  type LoadingTrip,
   type Vehicle,
   useCreateVehicle,
   useDeleteVehicle,
+  useGetAllBillingInvoices,
+  useGetAllLoadingTrips,
   useGetAllVehicles,
   useUpdateVehicle,
 } from "../hooks/useQueries";
 import { formatDate } from "../utils/format";
 
-// vehicle types: association, non-association, own, rented
-// Documents required for: own, rented
+function bigIntEqStr(a: bigint | number, b: bigint | number): boolean {
+  return BigInt(a) === BigInt(b);
+}
+
 function viewFile(fileUrl: string) {
   if (fileUrl.startsWith("data:")) {
     const [header, base64] = fileUrl.split(",");
@@ -108,7 +114,34 @@ function printFile(fileUrl: string) {
   }
 }
 
-// 194C(6) undertaking required for all types
+function getVehicleTripCount(
+  vehicleId: bigint | number,
+  trips: LoadingTrip[],
+): number {
+  return trips.filter((t) => bigIntEqStr(t.vehicleId, vehicleId)).length;
+}
+
+/** Check expiry fields for 'own' or 'vendor' (also 'rented') vehicles */
+function getExpiringDocs(vehicle: Vehicle): { label: string; days: number }[] {
+  const needsCheck =
+    vehicle.vehicleType === "own" ||
+    vehicle.vehicleType === "vendor" ||
+    vehicle.vehicleType === "rented";
+  if (!needsCheck) return [];
+  const checks = [
+    { label: "Insurance", dateStr: vehicle.insuranceExpiry },
+    { label: "Pollution Certificate", dateStr: vehicle.pollutionExpiry },
+    { label: "Fitness Certificate", dateStr: vehicle.fitnessExpiry },
+  ];
+  const result: { label: string; days: number }[] = [];
+  for (const c of checks) {
+    if (!c.dateStr) continue;
+    const days = getDaysUntilExpiry(c.dateStr);
+    if (days <= 30) result.push({ label: c.label, days });
+  }
+  return result;
+}
+
 interface VehicleFormData {
   vehicleNumber: string;
   vehicleType: string;
@@ -138,7 +171,7 @@ const VEHICLE_TYPES = [
   { value: "association", label: "Association" },
   { value: "non-association", label: "Non-Association" },
   { value: "own", label: "Own" },
-  { value: "rented", label: "Rented" },
+  { value: "vendor", label: "Vendor" },
 ];
 
 const defaultForm: VehicleFormData = {
@@ -358,6 +391,8 @@ function BankAccountSection({
 
 export default function VehiclesPage() {
   const vehiclesQuery = useGetAllVehicles();
+  const tripsQuery = useGetAllLoadingTrips();
+  const billingInvoicesQuery = useGetAllBillingInvoices();
   const createVehicle = useCreateVehicle();
   const updateVehicle = useUpdateVehicle();
   const deleteVehicle = useDeleteVehicle();
@@ -370,6 +405,39 @@ export default function VehiclesPage() {
   const undertakingFileRef = useRef<HTMLInputElement>(null);
 
   const vehicles = vehiclesQuery.data ?? [];
+  const trips = tripsQuery.data ?? [];
+  const billingInvoices = billingInvoicesQuery.data ?? [];
+
+  // Build set of all billed trip IDs
+  const billedTripIds = useMemo(
+    () =>
+      new Set<string>(
+        billingInvoices.flatMap((inv) =>
+          (inv.tripIds ?? []).map((id) => id.toString()),
+        ),
+      ),
+    [billingInvoices],
+  );
+
+  // Compute trip counts per vehicle id
+  const tripCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const v of vehicles) {
+      map.set(v.id.toString(), getVehicleTripCount(v.id, trips));
+    }
+    return map;
+  }, [vehicles, trips]);
+
+  // Compute expiry alerts across all own/vendor vehicles
+  const expiryAlertVehicles = useMemo(() => {
+    return vehicles
+      .filter((v) => ["own", "vendor", "rented"].includes(v.vehicleType))
+      .map((v) => ({
+        vehicle: v,
+        expiringDocs: getExpiringDocs(v),
+      }))
+      .filter((x) => x.expiringDocs.length > 0);
+  }, [vehicles]);
 
   const filteredVehicles = vehicles.filter((item) => {
     const q = searchQuery.toLowerCase().trim();
@@ -428,16 +496,19 @@ export default function VehiclesPage() {
       insuranceExpiry: item.insuranceExpiry,
       pollutionExpiry: item.pollutionExpiry,
       fitnessExpiry: item.fitnessExpiry,
-      undertakingFileUrl: (item as any).undertakingFileUrl ?? "",
-      undertakingFileName: (item as any).undertakingFileName ?? "",
+      undertakingFileUrl:
+        (item as { undertakingFileUrl?: string }).undertakingFileUrl ?? "",
+      undertakingFileName:
+        (item as { undertakingFileName?: string }).undertakingFileName ?? "",
       isActive: item.isActive,
     });
     setDialogOpen(true);
   };
 
-  // Documents required for own and rented types
   const needsDocuments =
-    form.vehicleType === "own" || form.vehicleType === "rented";
+    form.vehicleType === "own" ||
+    form.vehicleType === "vendor" ||
+    form.vehicleType === "rented";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,12 +534,21 @@ export default function VehiclesPage() {
       fitnessExpiry: needsDocuments ? form.fitnessExpiry : "",
       isActive: form.isActive,
     };
+    // Attach undertaking as extra fields (cast to any for the extra fields)
+    const dataWithUndertaking = {
+      ...data,
+      undertakingFileUrl: form.undertakingFileUrl,
+      undertakingFileName: form.undertakingFileName,
+    } as Omit<Vehicle, "id">;
     try {
       if (editingItem) {
-        await updateVehicle.mutateAsync({ id: editingItem.id, ...data });
+        await updateVehicle.mutateAsync({
+          id: editingItem.id,
+          ...dataWithUndertaking,
+        });
         toast.success("Vehicle updated successfully");
       } else {
-        await createVehicle.mutateAsync(data);
+        await createVehicle.mutateAsync(dataWithUndertaking);
         toast.success("Vehicle added successfully");
       }
       setDialogOpen(false);
@@ -479,6 +559,25 @@ export default function VehiclesPage() {
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
+    const tripCount = tripCountMap.get(deleteConfirm.id.toString()) ?? 0;
+    // Block if any linked trip is billed
+    const hasBilledTrips = trips
+      .filter((t) => bigIntEqStr(t.vehicleId, deleteConfirm.id))
+      .some((t) => billedTripIds.has(t.id.toString()));
+    if (hasBilledTrips) {
+      toast.error(
+        `Cannot delete: "${deleteConfirm.vehicleNumber}" has trips included in billing invoices.`,
+      );
+      setDeleteConfirm(null);
+      return;
+    }
+    if (tripCount > 0) {
+      toast.error(
+        `Cannot delete: "${deleteConfirm.vehicleNumber}" has ${tripCount} loading trip${tripCount !== 1 ? "s" : ""} on record`,
+      );
+      setDeleteConfirm(null);
+      return;
+    }
     try {
       await deleteVehicle.mutateAsync(deleteConfirm.id);
       toast.success("Vehicle deleted");
@@ -489,6 +588,33 @@ export default function VehiclesPage() {
   };
 
   const isSaving = createVehicle.isPending || updateVehicle.isPending;
+
+  const deleteConfirmTripCount = deleteConfirm
+    ? (tripCountMap.get(deleteConfirm.id.toString()) ?? 0)
+    : 0;
+  const deleteConfirmHasBilledTrips = deleteConfirm
+    ? trips
+        .filter((t) => bigIntEqStr(t.vehicleId, deleteConfirm.id))
+        .some((t) => billedTripIds.has(t.id.toString()))
+    : false;
+  // Count diesel entries from localStorage for this vehicle
+  const deleteConfirmDieselCount = (() => {
+    if (!deleteConfirm) return 0;
+    try {
+      const dieselItems = JSON.parse(
+        localStorage.getItem("jt_local_diesel") || "[]",
+      ) as Array<{ truckId?: string | number }>;
+      return dieselItems.filter((d) => {
+        try {
+          return BigInt(d.truckId?.toString() ?? "") === deleteConfirm.id;
+        } catch {
+          return false;
+        }
+      }).length;
+    } catch {
+      return 0;
+    }
+  })();
 
   return (
     <div className="p-6 space-y-5" data-ocid="vehicles.page">
@@ -523,6 +649,45 @@ export default function VehiclesPage() {
           Add Vehicle
         </Button>
       </div>
+
+      {/* Expiry Alert Banner */}
+      {expiryAlertVehicles.length > 0 && (
+        <div
+          className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3"
+          data-ocid="vehicles.expiry_alert_banner"
+        >
+          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800">
+              ⚠ {expiryAlertVehicles.length} vehicle
+              {expiryAlertVehicles.length !== 1 ? "s have" : " has"} expired or
+              expiring documents
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Insurance, Pollution Certificate, or Fitness Certificate within 30
+              days or already expired
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {expiryAlertVehicles.map(({ vehicle, expiringDocs }) => (
+                <span
+                  key={vehicle.id.toString()}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+                  title={expiringDocs
+                    .map(
+                      (d) =>
+                        `${d.label}: ${d.days < 0 ? "Expired" : `${d.days}d left`}`,
+                    )
+                    .join(", ")}
+                >
+                  {vehicle.vehicleNumber}
+                  {" — "}
+                  {expiringDocs.map((d) => d.label.split(" ")[0]).join(", ")}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative">
@@ -571,7 +736,17 @@ export default function VehiclesPage() {
                 ? "bg-green-50 text-green-700 border-green-200"
                 : bankBadge === "1 Account"
                   ? "bg-blue-50 text-blue-700 border-blue-200"
-                  : "bg-gray-50 text-gray-500 border-gray-200";
+                  : "bg-muted text-muted-foreground border-border";
+            const tripCount = tripCountMap.get(item.id.toString()) ?? 0;
+            const isLocked = tripCount > 0;
+            const expiringDocs = getExpiringDocs(item);
+            const hasExpiryAlert = expiringDocs.length > 0;
+            // Undertaking: check both in the object and in localStorage by vehicle id
+            const undertakingUrl =
+              (item as { undertakingFileUrl?: string }).undertakingFileUrl ||
+              localStorage.getItem(`jt_vehicle_undertaking_${item.id}`) ||
+              "";
+
             return (
               <div
                 key={item.id.toString()}
@@ -580,7 +755,7 @@ export default function VehiclesPage() {
               >
                 {/* Top row */}
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-bold font-mono text-foreground">
                       {item.vehicleNumber}
                     </p>
@@ -596,9 +771,35 @@ export default function VehiclesPage() {
                       >
                         {bankBadge}
                       </span>
+                      {/* Trip count / lock badge */}
+                      {isLocked && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                          title={`In use: ${tripCount} loading trip${tripCount !== 1 ? "s" : ""} — cannot be deleted`}
+                          data-ocid={`vehicles.lock_badge.${index + 1}`}
+                        >
+                          <Lock className="h-2.5 w-2.5" />
+                          {tripCount} trip{tripCount !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {/* Doc expiry alert badge */}
+                      {hasExpiryAlert && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"
+                          title={expiringDocs
+                            .map(
+                              (d) =>
+                                `${d.label}: ${d.days < 0 ? "Expired" : `${d.days}d left`}`,
+                            )
+                            .join(", ")}
+                          data-ocid={`vehicles.expiry_badge.${index + 1}`}
+                        >
+                          <AlertTriangle className="h-2.5 w-2.5" />⚠ Doc Expiry
+                        </span>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 shrink-0">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -612,7 +813,13 @@ export default function VehiclesPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setDeleteConfirm(item)}
-                      className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={isLocked}
+                      title={
+                        isLocked
+                          ? `Cannot delete: vehicle has ${tripCount} loading trip${tripCount !== 1 ? "s" : ""}`
+                          : "Delete vehicle"
+                      }
                       data-ocid={`vehicles.delete_button.${index + 1}`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -660,8 +867,9 @@ export default function VehiclesPage() {
                   </div>
                 )}
 
-                {/* Document expiry for own/rented */}
+                {/* Document expiry for own/vendor/rented */}
                 {(item.vehicleType === "own" ||
+                  item.vehicleType === "vendor" ||
                   item.vehicleType === "rented") && (
                   <div className="rounded-md border border-border bg-muted/30 p-2.5 space-y-1.5">
                     <ExpiryBadge
@@ -675,16 +883,17 @@ export default function VehiclesPage() {
                     <ExpiryBadge label="Fitness" dateStr={item.fitnessExpiry} />
                   </div>
                 )}
-                {/* 194C(6) Undertaking badge */}
-                {(item as any).undertakingFileUrl && (
+
+                {/* 194C(6) Undertaking badge — shows if undertakingFileUrl on object OR in localStorage */}
+                {undertakingUrl ? (
                   <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700">
                     <FileCheck className="h-3 w-3 shrink-0" />
                     <span className="font-medium flex-1">
-                      194C(6) Undertaking
+                      194C(6) Undertaking ✓
                     </span>
                     <button
                       type="button"
-                      onClick={() => viewFile((item as any).undertakingFileUrl)}
+                      onClick={() => viewFile(undertakingUrl)}
                       className="h-5 w-5 flex items-center justify-center rounded hover:bg-emerald-200 transition-colors"
                       title="View"
                       data-ocid={`vehicles.undertaking_view.button.${index + 1}`}
@@ -695,9 +904,9 @@ export default function VehiclesPage() {
                       type="button"
                       onClick={() =>
                         downloadFile(
-                          (item as any).undertakingFileUrl,
-                          (item as any).undertakingFileName ||
-                            "194C6-undertaking",
+                          undertakingUrl,
+                          (item as { undertakingFileName?: string })
+                            .undertakingFileName || "194C6-undertaking",
                         )
                       }
                       className="h-5 w-5 flex items-center justify-center rounded hover:bg-emerald-200 transition-colors"
@@ -708,9 +917,7 @@ export default function VehiclesPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
-                        printFile((item as any).undertakingFileUrl)
-                      }
+                      onClick={() => printFile(undertakingUrl)}
                       className="h-5 w-5 flex items-center justify-center rounded hover:bg-emerald-200 transition-colors"
                       title="Print"
                       data-ocid={`vehicles.undertaking_print.button.${index + 1}`}
@@ -718,7 +925,7 @@ export default function VehiclesPage() {
                       <Printer className="h-3 w-3" />
                     </button>
                   </div>
-                )}
+                ) : null}
               </div>
             );
           })}
@@ -782,7 +989,8 @@ export default function VehiclesPage() {
                   ))}
                 </RadioGroup>
                 <p className="text-[10px] text-muted-foreground">
-                  Document expiry dates required for Own and Rented vehicles.
+                  Document expiry dates required for Own, Vendor, and Rented
+                  vehicles.
                 </p>
               </div>
 
@@ -902,7 +1110,7 @@ export default function VehiclesPage() {
               />
             </div>
 
-            {/* Documents section - only for own/rented */}
+            {/* Documents section - only for own/vendor/rented */}
             {needsDocuments && (
               <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
                 <p className="text-xs font-semibold text-foreground">
@@ -997,7 +1205,7 @@ export default function VehiclesPage() {
                 <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
                   <FileCheck className="h-4 w-4 text-emerald-600 shrink-0" />
                   <span className="text-xs text-emerald-800 flex-1 truncate font-medium">
-                    {form.undertakingFileName || "Undertaking uploaded"}
+                    {form.undertakingFileName || "Undertaking uploaded"} ✓
                   </span>
                   <div className="flex items-center gap-1 shrink-0">
                     <a
@@ -1091,38 +1299,135 @@ export default function VehiclesPage() {
       >
         <DialogContent className="max-w-sm" data-ocid="vehicles.delete_dialog">
           <DialogHeader>
-            <DialogTitle className="font-display">Delete Vehicle</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Delete <strong>{deleteConfirm?.vehicleNumber}</strong>? This cannot
-            be undone.
-          </p>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirm(null)}
-              className="text-xs"
-              data-ocid="vehicles.delete_cancel_button"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteVehicle.isPending}
-              className="text-xs"
-              data-ocid="vehicles.delete_confirm_button"
-            >
-              {deleteVehicle.isPending ? (
+            <DialogTitle className="font-display flex items-center gap-2">
+              {deleteConfirmHasBilledTrips ? (
                 <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Deleting...
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  Cannot Delete Vehicle
+                </>
+              ) : deleteConfirmTripCount > 0 ? (
+                <>
+                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  Confirm Delete with Cascade
                 </>
               ) : (
-                "Delete"
+                "Delete Vehicle"
               )}
-            </Button>
-          </DialogFooter>
+            </DialogTitle>
+          </DialogHeader>
+          {deleteConfirmHasBilledTrips ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong>{deleteConfirm?.vehicleNumber}</strong> cannot be
+                deleted because one or more of its trips are included in a
+                billing invoice.
+              </p>
+              <div className="flex items-start gap-2 rounded-md px-3 py-2 text-xs bg-destructive/5 border border-destructive/20 text-destructive">
+                <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                Reverse the billing invoice first before deleting this vehicle.
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="text-xs w-full"
+                  data-ocid="vehicles.delete_cancel_button"
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : deleteConfirmTripCount > 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Deleting <strong>{deleteConfirm?.vehicleNumber}</strong> will
+                permanently remove:
+              </p>
+              <ul className="text-xs space-y-1 text-muted-foreground ml-2">
+                <li>
+                  •{" "}
+                  <strong className="text-foreground">
+                    {deleteConfirmTripCount}
+                  </strong>{" "}
+                  Loading Trip{deleteConfirmTripCount !== 1 ? "s" : ""}
+                </li>
+                {deleteConfirmDieselCount > 0 && (
+                  <li>
+                    •{" "}
+                    <strong className="text-foreground">
+                      {deleteConfirmDieselCount}
+                    </strong>{" "}
+                    Diesel Entr{deleteConfirmDieselCount !== 1 ? "ies" : "y"}
+                  </li>
+                )}
+                <li>• Related Payable and Petty Cash entries</li>
+              </ul>
+              <div className="flex items-start gap-2 rounded-md px-3 py-2 text-xs bg-amber-50 border border-amber-200 text-amber-800">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                This action is irreversible. All linked records will be
+                permanently deleted.
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="text-xs"
+                  data-ocid="vehicles.delete_cancel_button"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteVehicle.isPending}
+                  className="text-xs"
+                  data-ocid="vehicles.delete_confirm_button"
+                >
+                  {deleteVehicle.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    "Permanently Delete All"
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Delete <strong>{deleteConfirm?.vehicleNumber}</strong>? This
+                cannot be undone.
+              </p>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="text-xs"
+                  data-ocid="vehicles.delete_cancel_button"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteVehicle.isPending}
+                  className="text-xs"
+                  data-ocid="vehicles.delete_confirm_button"
+                >
+                  {deleteVehicle.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    "Delete"
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

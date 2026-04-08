@@ -32,6 +32,8 @@ import {
   Banknote,
   FileText,
   Fuel,
+  HelpCircle,
+  Info,
   Loader2,
   Lock,
   Paperclip,
@@ -40,6 +42,7 @@ import {
   Trash2,
   Truck,
   Wallet,
+  X,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -53,6 +56,7 @@ import {
   useGetAllBunkPayments,
   useGetAllLoadingTrips,
   useGetAllLocalDieselEntries,
+  useGetAllPetrolBunks,
   useGetAllVehicles,
   useUpdateLocalDieselEntry,
 } from "../hooks/useQueries";
@@ -103,6 +107,7 @@ export default function DieselPage() {
   const loadingTripsQuery = useGetAllLoadingTrips();
   const vehiclesQuery = useGetAllVehicles();
   const bunkPaymentsQuery = useGetAllBunkPayments();
+  const petrolBunksQuery = useGetAllPetrolBunks();
 
   const createManual = useCreateLocalDieselEntry();
   const updateManual = useUpdateLocalDieselEntry();
@@ -121,6 +126,8 @@ export default function DieselPage() {
   const [billPreview, setBillPreview] = useState<LocalDieselEntry | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Manual Bunk Bill workflow banner dismiss state
+  const [manualBannerDismissed, setManualBannerDismissed] = useState(false);
   // Bill No inline edit state
   const [editBillNoId, setEditBillNoId] = useState<string | null>(null);
   const [editBillNoValue, setEditBillNoValue] = useState("");
@@ -140,8 +147,42 @@ export default function DieselPage() {
   const trips = loadingTripsQuery.data ?? [];
   const manualEntries = manualDieselQuery.data ?? [];
   const bunkPayments = bunkPaymentsQuery.data ?? [];
+  const petrolBunks = petrolBunksQuery.data ?? [];
 
   const total = Number(form.litre || 0) * Number(form.rate || 0);
+
+  // Check credit limit for selected vendor in the form
+  const selectedBunkMaster = petrolBunks.find(
+    (b) => b.bunkName.toLowerCase() === (form.vendor || "").toLowerCase(),
+  );
+  const selectedBunkOutstanding = form.vendor
+    ? (() => {
+        const bunkSummaryEntry = Object.entries(
+          (() => {
+            const map: Record<string, number> = {};
+            for (const t of trips.filter((t) => (t.hsdAmount ?? 0) > 0)) {
+              const bunk = t.petrolBunkName || "";
+              map[bunk] = (map[bunk] ?? 0) + (t.hsdAmount ?? 0);
+            }
+            for (const e of manualEntries) {
+              const bunk = e.vendor || "";
+              map[bunk] = (map[bunk] ?? 0) + e.total;
+            }
+            for (const p of bunkPayments) {
+              const bunk = p.bunkName || "";
+              map[bunk] = (map[bunk] ?? 0) - p.amount;
+            }
+            return map;
+          })(),
+        ).find(([k]) => k.toLowerCase() === form.vendor.toLowerCase());
+        return bunkSummaryEntry ? bunkSummaryEntry[1] : 0;
+      })()
+    : 0;
+  const newEntryTotal = total;
+  const wouldExceedCreditLimit =
+    selectedBunkMaster &&
+    selectedBunkMaster.creditLimit > 0 &&
+    selectedBunkOutstanding + newEntryTotal > selectedBunkMaster.creditLimit;
 
   // Trip HSD entries: trips with hsdAmount > 0
   const tripHSDEntries = useMemo(
@@ -646,9 +687,12 @@ export default function DieselPage() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                              <Truck className="h-2.5 w-2.5" />
-                              Trip HSD
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700"
+                              title="Auto-recorded from Loading Trip — edit the loading trip to change this value"
+                            >
+                              <Lock className="h-2.5 w-2.5" />
+                              Auto · Trip HSD
                             </span>
                           </TableCell>
                         </TableRow>
@@ -663,6 +707,50 @@ export default function DieselPage() {
 
         {/* Section B: Manual Bunk Bills (editable) */}
         <TabsContent value="manual" className="mt-3 space-y-4">
+          {/* Workflow help banner */}
+          {!manualBannerDismissed && (
+            <div
+              className="flex items-start gap-3 rounded-lg border px-4 py-3 relative"
+              style={{
+                background: "oklch(0.98 0.04 75)",
+                borderColor: "oklch(0.78 0.14 75)",
+              }}
+              data-ocid="diesel.manual.workflow_banner"
+            >
+              <Info
+                className="h-4 w-4 shrink-0 mt-0.5"
+                style={{ color: "oklch(0.55 0.16 75)" }}
+              />
+              <div
+                className="text-xs leading-relaxed"
+                style={{ color: "oklch(0.4 0.12 75)" }}
+              >
+                <span className="font-semibold">
+                  How to record diesel bills:{" "}
+                </span>
+                <span className="font-semibold">Step 1</span> — Record each
+                diesel refill with the{" "}
+                <span className="font-semibold">Slip No</span> printed on the
+                physical receipt from the bunk.{" "}
+                <span className="font-semibold">Step 2</span> — Once the bunk
+                provides a consolidated bill covering multiple slips, enter the{" "}
+                <span className="font-semibold">Bill No</span> in the 'Bill No'
+                field. <span className="font-semibold">Step 3</span> — After
+                assigning a Bill No, the entry{" "}
+                <span className="font-semibold">locks automatically</span> and
+                becomes read-only.
+              </div>
+              <button
+                type="button"
+                onClick={() => setManualBannerDismissed(true)}
+                className="shrink-0 text-muted-foreground hover:text-foreground ml-auto"
+                aria-label="Dismiss banner"
+                data-ocid="diesel.manual.banner_dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           {/* Trip HSD entries vehicle-wise for bill number assignment */}
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <div className="px-4 py-3 border-b border-border bg-muted/30 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -734,10 +822,26 @@ export default function DieselPage() {
                         Amount
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
-                        Slip No
+                        <span className="flex items-center gap-1">
+                          Slip No
+                          <span
+                            title="Enter the physical slip number from the bunk receipt. Each refill has a unique slip."
+                            className="cursor-help text-muted-foreground hover:text-foreground"
+                          >
+                            <HelpCircle className="h-3 w-3" />
+                          </span>
+                        </span>
                       </TableHead>
                       <TableHead className="text-xs font-semibold">
-                        Bill No
+                        <span className="flex items-center gap-1">
+                          Bill No
+                          <span
+                            title="Enter the consolidated bill number from the bunk. Multiple slips can be grouped under one bill. Once entered, the entry is locked."
+                            className="cursor-help text-muted-foreground hover:text-foreground"
+                          >
+                            <HelpCircle className="h-3 w-3" />
+                          </span>
+                        </span>
                       </TableHead>
                     </TableRow>
                   </TableHeader>
@@ -831,10 +935,16 @@ export default function DieselPage() {
                                   </button>
                                 </div>
                               ) : dieselEntry?.billNo ? (
-                                <div className="flex items-center gap-1">
+                                <div
+                                  className="flex items-center gap-1"
+                                  title="Read-only: locked after Bill No assignment."
+                                >
                                   <Lock className="h-3 w-3 text-green-600" />
                                   <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium font-mono">
                                     {dieselEntry.billNo}
+                                  </span>
+                                  <span className="text-[10px] text-green-700 font-medium ml-0.5">
+                                    Locked
                                   </span>
                                 </div>
                               ) : (
@@ -1041,43 +1151,67 @@ export default function DieselPage() {
           {/* Bunk-wise summary cards */}
           {Object.keys(bunkSummary).length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(bunkSummary).map(([bunk, data]) => (
-                <Card key={bunk} className="border border-border">
-                  <CardContent className="p-4">
-                    <p className="text-xs font-semibold text-foreground truncate">
-                      {bunk}
-                    </p>
-                    <div className="mt-3 grid grid-cols-3 gap-2">
-                      <div>
-                        <p className="text-[10px] text-muted-foreground">
-                          Total Diesel
+              {Object.entries(bunkSummary).map(([bunk, data]) => {
+                const bunkMaster = petrolBunks.find(
+                  (b) => b.bunkName.toLowerCase() === bunk.toLowerCase(),
+                );
+                const isOverLimit =
+                  bunkMaster &&
+                  bunkMaster.creditLimit > 0 &&
+                  data.outstanding > bunkMaster.creditLimit;
+                return (
+                  <Card
+                    key={bunk}
+                    className={`border ${isOverLimit ? "border-red-300" : "border-border"}`}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-foreground truncate">
+                          {bunk}
                         </p>
-                        <p className="text-sm font-bold text-foreground">
-                          {formatCurrency(data.totalDiesel)}
-                        </p>
+                        {isOverLimit && (
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-[10px] font-semibold text-red-700 shrink-0">
+                            ⚠ Over Limit
+                          </span>
+                        )}
                       </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground">
-                          Paid
+                      {bunkMaster && bunkMaster.creditLimit > 0 && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          Credit limit: {formatCurrency(bunkMaster.creditLimit)}
                         </p>
-                        <p className="text-sm font-bold text-green-600">
-                          {formatCurrency(data.totalPaid)}
-                        </p>
+                      )}
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">
+                            Total Diesel
+                          </p>
+                          <p className="text-sm font-bold text-foreground">
+                            {formatCurrency(data.totalDiesel)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">
+                            Paid
+                          </p>
+                          <p className="text-sm font-bold text-green-600">
+                            {formatCurrency(data.totalPaid)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">
+                            Outstanding
+                          </p>
+                          <p
+                            className={`text-sm font-bold ${data.outstanding > 0 ? "text-red-600" : "text-green-600"}`}
+                          >
+                            {formatCurrency(Math.abs(data.outstanding))}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground">
-                          Outstanding
-                        </p>
-                        <p
-                          className={`text-sm font-bold ${data.outstanding > 0 ? "text-red-600" : "text-green-600"}`}
-                        >
-                          {formatCurrency(Math.abs(data.outstanding))}
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
 
@@ -1315,44 +1449,78 @@ export default function DieselPage() {
                   data-ocid="diesel.form.vendor_input"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="litre" className="text-xs">
-                  Litres *
-                </Label>
-                <Input
-                  id="litre"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.litre}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, litre: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="diesel.form.litre_input"
-                />
+            </div>
+            <div className="rounded-md bg-muted/50 border border-border p-3">
+              <p className="text-xs text-muted-foreground">
+                Auto-calculated Total
+              </p>
+              <p className="text-base font-bold font-display mt-1">
+                {formatCurrency(total)}
+              </p>
+            </div>
+            {/* Credit Limit Warning */}
+            {wouldExceedCreditLimit && selectedBunkMaster && (
+              <div
+                className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2"
+                data-ocid="diesel.form.credit_limit_warning"
+              >
+                <span className="text-red-600 shrink-0 mt-0.5 text-base">
+                  ⚠
+                </span>
+                <p className="text-xs text-red-700">
+                  Adding this entry will exceed{" "}
+                  <strong>{selectedBunkMaster.bunkName}</strong>'s credit limit
+                  of{" "}
+                  <strong>
+                    {formatCurrency(selectedBunkMaster.creditLimit)}
+                  </strong>
+                  . Current outstanding:{" "}
+                  <strong>{formatCurrency(selectedBunkOutstanding)}</strong>.
+                  This entry will bring total to{" "}
+                  <strong>
+                    {formatCurrency(selectedBunkOutstanding + newEntryTotal)}
+                  </strong>
+                  .
+                </p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="dieselRate" className="text-xs">
-                  Rate per Litre (₹) *
-                </Label>
-                <Input
-                  id="dieselRate"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.rate}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, rate: e.target.value }))
-                  }
-                  required
-                  className="text-xs"
-                  data-ocid="diesel.form.rate_input"
-                />
-              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor="litre" className="text-xs">
+                Litres *
+              </Label>
+              <Input
+                id="litre"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                value={form.litre}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, litre: e.target.value }))
+                }
+                required
+                className="text-xs"
+                data-ocid="diesel.form.litre_input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dieselRate" className="text-xs">
+                Rate per Litre (₹) *
+              </Label>
+              <Input
+                id="dieselRate"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                value={form.rate}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, rate: e.target.value }))
+                }
+                required
+                className="text-xs"
+                data-ocid="diesel.form.rate_input"
+              />
             </div>
             <div className="rounded-md bg-muted/50 border border-border p-3">
               <p className="text-xs text-muted-foreground">

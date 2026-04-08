@@ -618,11 +618,10 @@ export default function UnloadingPage({
                   return (
                     <TableRow
                       key={item.id.toString()}
-                      className="table-row-hover"
-                      style={
+                      className={
                         billedInvoice
-                          ? { background: "oklch(0.97 0.04 85)" }
-                          : undefined
+                          ? "bg-amber-50 hover:bg-amber-100/70"
+                          : "table-row-hover"
                       }
                       data-ocid={`unloading.item.${index + 1}`}
                     >
@@ -680,10 +679,11 @@ export default function UnloadingPage({
                         <div className="flex items-center justify-end gap-1">
                           {billedInvoice && (
                             <span
-                              className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 mr-1"
-                              title={`Invoice: ${billedInvoice}`}
+                              className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 mr-1"
+                              title={`Locked: included in Invoice ${billedInvoice}`}
                             >
-                              <Lock className="h-3 w-3" />
+                              <Lock className="h-3 w-3 text-amber-600" />
+                              <span className="text-amber-600">🔒</span>
                               Billed
                             </span>
                           )}
@@ -697,7 +697,7 @@ export default function UnloadingPage({
                             disabled={!!billedInvoice}
                             title={
                               billedInvoice
-                                ? `Locked – included in invoice ${billedInvoice}`
+                                ? `Locked: included in Invoice ${billedInvoice} — cannot edit`
                                 : "Edit"
                             }
                             data-ocid={`unloading.edit_button.${index + 1}`}
@@ -714,7 +714,7 @@ export default function UnloadingPage({
                             disabled={!!billedInvoice}
                             title={
                               billedInvoice
-                                ? `Locked – included in invoice ${billedInvoice}`
+                                ? `Cannot delete: this unloading is included in invoice ${billedInvoice}`
                                 : "Delete"
                             }
                             data-ocid={`unloading.delete_button.${index + 1}`}

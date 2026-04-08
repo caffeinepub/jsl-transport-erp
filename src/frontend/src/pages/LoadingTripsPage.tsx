@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  AlertCircle,
   Loader2,
   Lock,
   Package,
@@ -52,6 +53,7 @@ import {
   useGetAllDeliveryOrders,
   useGetAllLoadingTrips,
   useGetAllPetrolBunks,
+  useGetAllUnloadings,
   useGetAllVehicles,
   useUpdateLoadingTrip,
 } from "../hooks/useQueries";
@@ -95,12 +97,18 @@ interface LoadingTripsPageProps {
   onRecordUnloading?: (trip: LoadingTrip) => void;
 }
 
+// Locked field styling classes
+const LOCKED_INPUT_CLASS =
+  "text-xs bg-gray-100 text-gray-500 cursor-not-allowed opacity-80";
+const EDITABLE_INPUT_CLASS = "text-xs";
+
 export default function LoadingTripsPage({
   onRecordUnloading,
 }: LoadingTripsPageProps) {
   const tripsQuery = useGetAllLoadingTrips();
   const vehiclesQuery = useGetAllVehicles();
   const billingInvoicesQuery = useGetAllBillingInvoices();
+  const unloadingsQuery = useGetAllUnloadings();
   const dosQuery = useGetAllDeliveryOrders();
   const consignersQuery = useGetAllConsigners();
   const consigneesQuery = useGetAllConsignees();
@@ -121,6 +129,7 @@ export default function LoadingTripsPage({
   const [deleteConfirm, setDeleteConfirm] = useState<LoadingTrip | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [quickAddVehicleOpen, setQuickAddVehicleOpen] = useState(false);
+  const [passNumberWarning, setPassNumberWarning] = useState(false);
   const [quickVehicleForm, setQuickVehicleForm] = useState({
     vehicleNumber: "",
     vehicleType: "Association",
@@ -131,10 +140,22 @@ export default function LoadingTripsPage({
   const trips = tripsQuery.data ?? [];
   const vehicles = vehiclesQuery.data ?? [];
   const billingInvoices = billingInvoicesQuery.data ?? [];
+  const unloadings = unloadingsQuery.data ?? [];
   const billedTripIds = new Set<string>(
     billingInvoices.flatMap((inv) =>
       (inv.tripIds ?? []).map((id) => id.toString()),
     ),
+  );
+  // Map from trip ID → invoice number (for tooltip)
+  const billedTripInvoiceMap = new Map<string, string>();
+  for (const inv of billingInvoices) {
+    for (const tid of inv.tripIds ?? []) {
+      billedTripInvoiceMap.set(tid.toString(), inv.invoiceNumber ?? "");
+    }
+  }
+  // Set of trip IDs that have an unloading entry (by loadingTripId)
+  const unloadedTripIds = new Set<string>(
+    unloadings.map((u) => u.loadingTripId.toString()),
   );
   const dos = dosQuery.data ?? [];
   const consigners = consignersQuery.data ?? [];
@@ -149,6 +170,9 @@ export default function LoadingTripsPage({
     consignees.find((c) => c.id === id)?.name ?? id.toString();
   const getDONumber = (id: bigint) =>
     dos.find((d) => d.id === id)?.doNumber ?? id.toString();
+
+  const isUnloadedTrip = (tripId: bigint) =>
+    unloadedTripIds.has(tripId.toString());
 
   const filteredTrips = trips.filter((item) => {
     const q = searchQuery.toLowerCase().trim();
@@ -190,6 +214,32 @@ export default function LoadingTripsPage({
           : p.consigneeId,
     }));
   };
+
+  // Compute DO expiry state for the selected DO in the form
+  const selectedDO =
+    form.doId && form.doId !== "0"
+      ? dos.find((d) => d.id.toString() === form.doId)
+      : null;
+  const selectedDOExpiryDays = selectedDO?.expiryDate
+    ? (() => {
+        const expiry = new Date(selectedDO.expiryDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        expiry.setHours(0, 0, 0, 0);
+        return Math.floor(
+          (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+        );
+      })()
+    : null;
+  const isDOExpired = selectedDOExpiryDays !== null && selectedDOExpiryDays < 0;
+  const isDOExpiringSoon =
+    selectedDOExpiryDays !== null &&
+    selectedDOExpiryDays >= 0 &&
+    selectedDOExpiryDays <= 7;
+  const userRole =
+    typeof window !== "undefined"
+      ? (localStorage.getItem("jt_user_role") ?? "User")
+      : "User";
 
   const normalizeId = (v: bigint | number | string) =>
     String(Number(BigInt(v.toString())));
@@ -395,6 +445,18 @@ export default function LoadingTripsPage({
   const totalAdvance =
     (Number(form.advanceCash) || 0) + (Number(form.advanceBank) || 0);
 
+  // Compute lock state for the currently edited trip
+  const editingIsBilled = editingItem
+    ? billedTripIds.has(editingItem.id.toString())
+    : false;
+  const editingIsUnloaded = editingItem
+    ? isUnloadedTrip(editingItem.id)
+    : false;
+  // Key fields are locked if unloaded (or billed — billed means fully locked anyway)
+  const keyFieldsLocked = editingIsBilled || editingIsUnloaded;
+  // Expense fields are locked only if billed
+  const expenseFieldsLocked = editingIsBilled;
+
   return (
     <div className="p-6 space-y-5" data-ocid="loading_trips.page">
       {/* Header */}
@@ -507,15 +569,18 @@ export default function LoadingTripsPage({
                 {filteredTrips.map((item, index) => {
                   const advance = item.advanceCash + item.advanceBank;
                   const isBilledTrip = billedTripIds.has(item.id.toString());
+                  const isUnloaded = isUnloadedTrip(item.id);
+                  // Row background: amber tint for billed, subtle blue tint for unloaded-only
+                  const rowStyle = isBilledTrip
+                    ? { background: "oklch(0.97 0.04 85)" }
+                    : isUnloaded
+                      ? { background: "oklch(0.97 0.02 240)" }
+                      : undefined;
                   return (
                     <TableRow
                       key={item.id.toString()}
                       className="table-row-hover"
-                      style={
-                        isBilledTrip
-                          ? { background: "oklch(0.97 0.04 85)" }
-                          : undefined
-                      }
+                      style={rowStyle}
                       data-ocid={`loading_trips.item.${index + 1}`}
                     >
                       <TableCell className="text-xs font-mono font-semibold">
@@ -560,10 +625,36 @@ export default function LoadingTripsPage({
                               Loaded
                             </span>
                           )}
-                          {isBilledTrip && (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                          {/* Billed badge — highest lock level */}
+                          {isBilledTrip &&
+                            (() => {
+                              const invNo = billedTripInvoiceMap.get(
+                                item.id.toString(),
+                              );
+                              return (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+                                  title={
+                                    invNo
+                                      ? `Locked: included in Invoice ${invNo}. Contact Admin to modify.`
+                                      : "Locked: included in a billing invoice. Contact Admin to modify."
+                                  }
+                                  data-ocid={`loading_trips.billed_lock_badge.${index + 1}`}
+                                >
+                                  <Lock className="h-3 w-3" />
+                                  Billed{invNo ? ` · ${invNo}` : ""}
+                                </span>
+                              );
+                            })()}
+                          {/* Unloaded partial-lock badge — only when not already billed */}
+                          {!isBilledTrip && isUnloaded && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
+                              title={`Key fields locked: unloading recorded for Challan ${item.challanNo}. Vehicle, DO, and Qty cannot be changed.`}
+                              data-ocid={`loading_trips.unloaded_lock_badge.${index + 1}`}
+                            >
                               <Lock className="h-3 w-3" />
-                              Billed
+                              Unloaded
                             </span>
                           )}
                         </div>
@@ -591,8 +682,10 @@ export default function LoadingTripsPage({
                             disabled={isBilledTrip}
                             title={
                               isBilledTrip
-                                ? "Locked – trip is included in a bill"
-                                : "Edit"
+                                ? `Locked: included in Invoice ${billedTripInvoiceMap.get(item.id.toString()) ?? "billing invoice"}. Contact Admin.`
+                                : isUnloaded
+                                  ? "Edit expenses (key fields locked after unloading)"
+                                  : "Edit"
                             }
                             data-ocid={`loading_trips.edit_button.${index + 1}`}
                           >
@@ -608,7 +701,7 @@ export default function LoadingTripsPage({
                             disabled={isBilledTrip}
                             title={
                               isBilledTrip
-                                ? "Locked – trip is included in a bill"
+                                ? `Cannot delete: included in Invoice ${billedTripInvoiceMap.get(item.id.toString()) ?? "billing invoice"}. Reverse the invoice first.`
                                 : "Delete"
                             }
                             data-ocid={`loading_trips.delete_button.${index + 1}`}
@@ -639,6 +732,22 @@ export default function LoadingTripsPage({
                 : "Record Loading Trip"}
             </DialogTitle>
           </DialogHeader>
+
+          {/* Lock info banner — shown when editing an unloaded (but not billed) trip */}
+          {editingItem && editingIsUnloaded && !editingIsBilled && (
+            <div
+              className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5"
+              data-ocid="loading_trips.unload_lock_banner"
+            >
+              <AlertCircle className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-blue-700 leading-relaxed">
+                <span className="font-semibold">Key fields are locked</span>{" "}
+                because unloading has been recorded for this trip. Only expense
+                fields (Cash Advance, Diesel, Bunk Name) can be modified.
+              </p>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-4">
@@ -651,10 +760,14 @@ export default function LoadingTripsPage({
                   type="date"
                   value={form.loadingDate}
                   onChange={(e) =>
+                    !keyFieldsLocked &&
                     setForm((p) => ({ ...p, loadingDate: e.target.value }))
                   }
                   required
-                  className="text-xs"
+                  disabled={keyFieldsLocked}
+                  className={
+                    keyFieldsLocked ? LOCKED_INPUT_CLASS : EDITABLE_INPUT_CLASS
+                  }
                 />
               </div>
               <div className="space-y-1.5">
@@ -666,189 +779,334 @@ export default function LoadingTripsPage({
                   placeholder="CHN-001"
                   value={form.challanNo}
                   onChange={(e) =>
+                    !keyFieldsLocked &&
                     setForm((p) => ({ ...p, challanNo: e.target.value }))
                   }
                   required
-                  className="text-xs"
+                  disabled={keyFieldsLocked}
+                  className={
+                    keyFieldsLocked ? LOCKED_INPUT_CLASS : EDITABLE_INPUT_CLASS
+                  }
                   data-ocid="loading_trips.challan.input"
                 />
               </div>
+
+              {/* Vehicle search — locked when unloaded */}
               <div className="space-y-1.5">
-                <Label className="text-xs">Vehicle *</Label>
-                <div className="relative">
-                  <div className="flex items-center border border-input rounded-md bg-background px-2 h-9 gap-1">
-                    <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <input
-                      type="text"
-                      placeholder="Search vehicle number..."
-                      value={vehicleSearch}
-                      onChange={(e) => {
-                        setVehicleSearch(e.target.value);
-                        setVehicleDropdownOpen(true);
-                        if (!e.target.value)
-                          setForm((p) => ({ ...p, vehicleId: "" }));
-                      }}
-                      onFocus={() => setVehicleDropdownOpen(true)}
-                      onBlur={() =>
-                        setTimeout(() => setVehicleDropdownOpen(false), 150)
-                      }
-                      className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
-                      data-ocid="loading_trips.vehicle.search_input"
-                    />
-                    {form.vehicleId && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setVehicleSearch("");
-                          setForm((p) => ({ ...p, vehicleId: "" }));
-                        }}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+                <Label className="text-xs flex items-center gap-1.5">
+                  Vehicle *
+                  {keyFieldsLocked && (
+                    <Lock className="h-3 w-3 text-blue-500" />
+                  )}
+                </Label>
+                {keyFieldsLocked ? (
+                  <div className="flex h-9 items-center rounded-md border border-input bg-gray-100 px-3 text-xs text-gray-500 cursor-not-allowed opacity-80">
+                    {vehicleSearch || "—"}
                   </div>
-                  {vehicleDropdownOpen && vehicleSearch && (
-                    <div className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-popover shadow-lg max-h-48 overflow-y-auto">
-                      {vehicles
-                        .filter(
+                ) : (
+                  <div className="relative">
+                    <div className="flex items-center border border-input rounded-md bg-background px-2 h-9 gap-1">
+                      <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Search vehicle number..."
+                        value={vehicleSearch}
+                        onChange={(e) => {
+                          setVehicleSearch(e.target.value);
+                          setVehicleDropdownOpen(true);
+                          if (!e.target.value)
+                            setForm((p) => ({ ...p, vehicleId: "" }));
+                        }}
+                        onFocus={() => setVehicleDropdownOpen(true)}
+                        onBlur={() =>
+                          setTimeout(() => setVehicleDropdownOpen(false), 150)
+                        }
+                        className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+                        data-ocid="loading_trips.vehicle.search_input"
+                      />
+                      {form.vehicleId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVehicleSearch("");
+                            setForm((p) => ({ ...p, vehicleId: "" }));
+                          }}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {vehicleDropdownOpen && vehicleSearch && (
+                      <div className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-popover shadow-lg max-h-48 overflow-y-auto">
+                        {vehicles
+                          .filter(
+                            (v) =>
+                              v.isActive &&
+                              v.vehicleNumber
+                                .toLowerCase()
+                                .includes(vehicleSearch.toLowerCase()),
+                          )
+                          .slice(0, 6)
+                          .map((v) => (
+                            <button
+                              key={v.id.toString()}
+                              type="button"
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                              onMouseDown={() => {
+                                setForm((p) => ({
+                                  ...p,
+                                  vehicleId: String(Number(v.id)),
+                                }));
+                                setVehicleSearch(v.vehicleNumber);
+                                setVehicleDropdownOpen(false);
+                              }}
+                            >
+                              {v.vehicleNumber}
+                            </button>
+                          ))}
+                        {vehicles.filter(
                           (v) =>
                             v.isActive &&
                             v.vehicleNumber
                               .toLowerCase()
                               .includes(vehicleSearch.toLowerCase()),
-                        )
-                        .slice(0, 6)
-                        .map((v) => (
-                          <button
-                            key={v.id.toString()}
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground cursor-pointer"
-                            onMouseDown={() => {
-                              setForm((p) => ({
-                                ...p,
-                                vehicleId: String(Number(v.id)),
-                              }));
-                              setVehicleSearch(v.vehicleNumber);
-                              setVehicleDropdownOpen(false);
-                            }}
-                          >
-                            {v.vehicleNumber}
-                          </button>
-                        ))}
-                      {vehicles.filter(
-                        (v) =>
-                          v.isActive &&
-                          v.vehicleNumber
-                            .toLowerCase()
-                            .includes(vehicleSearch.toLowerCase()),
-                      ).length === 0 && (
-                        <div className="px-3 py-2 text-xs">
-                          <span className="text-muted-foreground">
-                            Vehicle not found.{" "}
-                          </span>
-                          <button
-                            type="button"
-                            className="text-primary font-medium hover:underline"
-                            onMouseDown={() => {
-                              setVehicleDropdownOpen(false);
-                              setQuickVehicleForm((p) => ({
-                                ...p,
-                                vehicleNumber: vehicleSearch,
-                              }));
-                              setQuickAddVehicleOpen(true);
-                            }}
-                          >
-                            + Add Vehicle
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                        ).length === 0 && (
+                          <div className="px-3 py-2 text-xs">
+                            <span className="text-muted-foreground">
+                              Vehicle not found.{" "}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-primary font-medium hover:underline"
+                              onMouseDown={() => {
+                                setVehicleDropdownOpen(false);
+                                setQuickVehicleForm((p) => ({
+                                  ...p,
+                                  vehicleNumber: vehicleSearch,
+                                }));
+                                setQuickAddVehicleOpen(true);
+                              }}
+                            >
+                              + Add Vehicle
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {/* Pass Number — locked when unloaded */}
               <div className="space-y-1.5">
-                <Label htmlFor="lt-pass" className="text-xs">
+                <Label
+                  htmlFor="lt-pass"
+                  className="text-xs flex items-center gap-1.5"
+                >
                   Pass Number
+                  {keyFieldsLocked && (
+                    <Lock className="h-3 w-3 text-blue-500" />
+                  )}
                 </Label>
                 <Input
                   id="lt-pass"
-                  placeholder="PASS-001"
+                  placeholder="e.g. MH-14-1234 or TN-07-5678"
                   value={form.passNumber}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, passNumber: e.target.value }))
+                  onChange={(e) => {
+                    if (!keyFieldsLocked) {
+                      setForm((p) => ({ ...p, passNumber: e.target.value }));
+                      if (passNumberWarning) setPassNumberWarning(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    if (
+                      !keyFieldsLocked &&
+                      form.passNumber.trim() &&
+                      form.passNumber.trim().length < 4
+                    ) {
+                      setPassNumberWarning(true);
+                    } else {
+                      setPassNumberWarning(false);
+                    }
+                  }}
+                  disabled={keyFieldsLocked}
+                  className={
+                    keyFieldsLocked ? LOCKED_INPUT_CLASS : EDITABLE_INPUT_CLASS
                   }
-                  className="text-xs"
+                  data-ocid="loading_trips.pass.input"
                 />
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  Enter the transport pass number as printed on the challan
+                </p>
+                {passNumberWarning && (
+                  <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    Pass number seems too short — please verify
+                  </p>
+                )}
               </div>
+
+              {/* DO — locked when unloaded */}
               <div className="space-y-1.5">
-                <Label className="text-xs">Delivery Order (DO)</Label>
-                <SearchableSelect
-                  value={form.doId}
-                  onChange={handleDOSelect}
-                  placeholder="Search DO (optional)..."
-                  data-ocid="loading_trips.do.select"
-                  options={[
-                    { value: "0", label: "None" },
-                    ...dos
-                      .filter((d) => d.status === "Active")
-                      .map((d) => {
-                        const csgName =
-                          consigners.find((c) => c.id === d.consignerId)
-                            ?.name ?? "?";
-                        const dispatched = trips
-                          .filter((t) => {
-                            try {
-                              return (
-                                BigInt(t.doId.toString()) ===
-                                BigInt(d.id.toString())
-                              );
-                            } catch {
-                              return false;
-                            }
-                          })
-                          .reduce((s, t) => s + (Number(t.loadingQty) || 0), 0);
-                        const remaining = d.doQty - dispatched;
-                        const overDispatch =
-                          remaining <= 0 && !d.allowOverDispatch;
-                        return {
-                          value: d.id.toString(),
-                          label: `${d.doNumber} — ${csgName} (Rem: ${remaining.toFixed(1)} MT${overDispatch ? " — FULL" : ""})`,
-                          disabled: overDispatch,
-                        };
-                      }),
-                  ]}
-                />
+                <Label className="text-xs flex items-center gap-1.5">
+                  Delivery Order (DO)
+                  {keyFieldsLocked && (
+                    <Lock className="h-3 w-3 text-blue-500" />
+                  )}
+                </Label>
+                {keyFieldsLocked ? (
+                  <div className="flex h-9 items-center rounded-md border border-input bg-gray-100 px-3 text-xs text-gray-500 cursor-not-allowed opacity-80">
+                    {form.doId && form.doId !== "0"
+                      ? (dos.find((d) => d.id.toString() === form.doId)
+                          ?.doNumber ?? form.doId)
+                      : "None"}
+                  </div>
+                ) : (
+                  <SearchableSelect
+                    value={form.doId}
+                    onChange={handleDOSelect}
+                    placeholder="Search DO (optional)..."
+                    data-ocid="loading_trips.do.select"
+                    options={[
+                      { value: "0", label: "None" },
+                      ...dos
+                        .filter((d) => d.status === "Active")
+                        .map((d) => {
+                          const csgName =
+                            consigners.find((c) => c.id === d.consignerId)
+                              ?.name ?? "?";
+                          const dispatched = trips
+                            .filter((t) => {
+                              try {
+                                return (
+                                  BigInt(t.doId.toString()) ===
+                                  BigInt(d.id.toString())
+                                );
+                              } catch {
+                                return false;
+                              }
+                            })
+                            .reduce(
+                              (s, t) => s + (Number(t.loadingQty) || 0),
+                              0,
+                            );
+                          const remaining = d.doQty - dispatched;
+                          const overDispatch =
+                            remaining <= 0 && !d.allowOverDispatch;
+                          return {
+                            value: d.id.toString(),
+                            label: `${d.doNumber} — ${csgName} (Rem: ${remaining.toFixed(1)} MT${overDispatch ? " — FULL" : ""})`,
+                            disabled: overDispatch,
+                          };
+                        }),
+                    ]}
+                  />
+                )}
+                {/* DO expiry warnings */}
+                {!keyFieldsLocked && isDOExpired && (
+                  <div
+                    className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 mt-1"
+                    data-ocid="loading_trips.do_expired_warning"
+                  >
+                    <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0 mt-0.5" />
+                    <div className="text-xs text-red-700">
+                      <span className="font-semibold">
+                        ⚠ This DO expired on {selectedDO?.expiryDate}.
+                      </span>
+                      {userRole === "Admin" ? (
+                        <span className="ml-1 text-amber-700 font-medium">
+                          Admin: DO is expired. Proceed with caution.
+                        </span>
+                      ) : (
+                        <span className="block mt-0.5">
+                          New trips cannot be added against expired DOs.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!keyFieldsLocked && isDOExpiringSoon && (
+                  <div
+                    className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 mt-1"
+                    data-ocid="loading_trips.do_expiring_warning"
+                  >
+                    <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-700">
+                      ⚠ This DO expires on{" "}
+                      <strong>{selectedDO?.expiryDate}</strong> (
+                      {selectedDOExpiryDays}d remaining)
+                    </p>
+                  </div>
+                )}
               </div>
+
+              {/* Consigner — locked when unloaded */}
               <div className="space-y-1.5">
-                <Label className="text-xs">Consigner (OCP) *</Label>
-                <SearchableSelect
-                  value={form.consignerId}
-                  onChange={(v) => setForm((p) => ({ ...p, consignerId: v }))}
-                  placeholder="Search OCP..."
-                  data-ocid="loading_trips.consigner.select"
-                  options={consigners.map((c) => ({
-                    value: c.id.toString(),
-                    label: c.name,
-                  }))}
-                />
+                <Label className="text-xs flex items-center gap-1.5">
+                  Consigner (OCP) *
+                  {keyFieldsLocked && (
+                    <Lock className="h-3 w-3 text-blue-500" />
+                  )}
+                </Label>
+                {keyFieldsLocked ? (
+                  <div className="flex h-9 items-center rounded-md border border-input bg-gray-100 px-3 text-xs text-gray-500 cursor-not-allowed opacity-80">
+                    {consigners.find(
+                      (c) => c.id.toString() === form.consignerId,
+                    )?.name ?? form.consignerId}
+                  </div>
+                ) : (
+                  <SearchableSelect
+                    value={form.consignerId}
+                    onChange={(v) => setForm((p) => ({ ...p, consignerId: v }))}
+                    placeholder="Search OCP..."
+                    data-ocid="loading_trips.consigner.select"
+                    options={consigners.map((c) => ({
+                      value: c.id.toString(),
+                      label: c.name,
+                    }))}
+                  />
+                )}
               </div>
+
+              {/* Consignee — locked when unloaded */}
               <div className="space-y-1.5">
-                <Label className="text-xs">Consignee *</Label>
-                <SearchableSelect
-                  value={form.consigneeId}
-                  onChange={(v) => setForm((p) => ({ ...p, consigneeId: v }))}
-                  placeholder="Search destination..."
-                  data-ocid="loading_trips.consignee.select"
-                  options={consignees.map((c) => ({
-                    value: c.id.toString(),
-                    label: c.name,
-                  }))}
-                />
+                <Label className="text-xs flex items-center gap-1.5">
+                  Consignee *
+                  {keyFieldsLocked && (
+                    <Lock className="h-3 w-3 text-blue-500" />
+                  )}
+                </Label>
+                {keyFieldsLocked ? (
+                  <div className="flex h-9 items-center rounded-md border border-input bg-gray-100 px-3 text-xs text-gray-500 cursor-not-allowed opacity-80">
+                    {consignees.find(
+                      (c) => c.id.toString() === form.consigneeId,
+                    )?.name ?? form.consigneeId}
+                  </div>
+                ) : (
+                  <SearchableSelect
+                    value={form.consigneeId}
+                    onChange={(v) => setForm((p) => ({ ...p, consigneeId: v }))}
+                    placeholder="Search destination..."
+                    data-ocid="loading_trips.consignee.select"
+                    options={consignees.map((c) => ({
+                      value: c.id.toString(),
+                      label: c.name,
+                    }))}
+                  />
+                )}
               </div>
+
+              {/* Loading Qty — locked when unloaded */}
               <div className="space-y-1.5">
-                <Label htmlFor="lt-qty" className="text-xs">
+                <Label
+                  htmlFor="lt-qty"
+                  className="text-xs flex items-center gap-1.5"
+                >
                   Loading Qty (MT) *
+                  {keyFieldsLocked && (
+                    <Lock className="h-3 w-3 text-blue-500" />
+                  )}
                 </Label>
                 <Input
                   id="lt-qty"
@@ -858,19 +1116,34 @@ export default function LoadingTripsPage({
                   placeholder="0.000"
                   value={form.loadingQty}
                   onChange={(e) =>
+                    !keyFieldsLocked &&
                     setForm((p) => ({ ...p, loadingQty: e.target.value }))
                   }
                   required
-                  className="text-xs"
+                  disabled={keyFieldsLocked}
+                  className={
+                    keyFieldsLocked ? LOCKED_INPUT_CLASS : EDITABLE_INPUT_CLASS
+                  }
                   data-ocid="loading_trips.qty.input"
                 />
               </div>
             </div>
 
-            {/* Advance section */}
+            {/* Advance section — editable unless billed */}
             <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-              <p className="text-xs font-semibold text-foreground">
+              <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                 Advance Payment
+                {expenseFieldsLocked && (
+                  <span className="inline-flex items-center gap-1 text-amber-600 font-normal">
+                    <Lock className="h-3 w-3" />
+                    Locked (billed)
+                  </span>
+                )}
+                {!expenseFieldsLocked && editingIsUnloaded && (
+                  <span className="text-xs text-green-600 font-normal">
+                    (editable)
+                  </span>
+                )}
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -885,9 +1158,15 @@ export default function LoadingTripsPage({
                     placeholder="0"
                     value={form.advanceCash}
                     onChange={(e) =>
+                      !expenseFieldsLocked &&
                       setForm((p) => ({ ...p, advanceCash: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={expenseFieldsLocked}
+                    className={
+                      expenseFieldsLocked
+                        ? LOCKED_INPUT_CLASS
+                        : EDITABLE_INPUT_CLASS
+                    }
                     data-ocid="loading_trips.advance_cash.input"
                   />
                 </div>
@@ -903,9 +1182,15 @@ export default function LoadingTripsPage({
                     placeholder="0"
                     value={form.advanceBank}
                     onChange={(e) =>
+                      !expenseFieldsLocked &&
                       setForm((p) => ({ ...p, advanceBank: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={expenseFieldsLocked}
+                    className={
+                      expenseFieldsLocked
+                        ? LOCKED_INPUT_CLASS
+                        : EDITABLE_INPUT_CLASS
+                    }
                   />
                 </div>
               </div>
@@ -925,10 +1210,21 @@ export default function LoadingTripsPage({
               )}
             </div>
 
-            {/* HSD section */}
+            {/* HSD section — editable unless billed */}
             <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-              <p className="text-xs font-semibold text-foreground">
+              <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                 HSD (Diesel Refill)
+                {expenseFieldsLocked && (
+                  <span className="inline-flex items-center gap-1 text-amber-600 font-normal">
+                    <Lock className="h-3 w-3" />
+                    Locked (billed)
+                  </span>
+                )}
+                {!expenseFieldsLocked && editingIsUnloaded && (
+                  <span className="text-xs text-green-600 font-normal">
+                    (editable)
+                  </span>
+                )}
               </p>
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1.5">
@@ -943,9 +1239,15 @@ export default function LoadingTripsPage({
                     placeholder="0"
                     value={form.hsdLitres}
                     onChange={(e) =>
+                      !expenseFieldsLocked &&
                       setForm((p) => ({ ...p, hsdLitres: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={expenseFieldsLocked}
+                    className={
+                      expenseFieldsLocked
+                        ? LOCKED_INPUT_CLASS
+                        : EDITABLE_INPUT_CLASS
+                    }
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -960,9 +1262,15 @@ export default function LoadingTripsPage({
                     placeholder="0"
                     value={form.hsdAmount}
                     onChange={(e) =>
+                      !expenseFieldsLocked &&
                       setForm((p) => ({ ...p, hsdAmount: e.target.value }))
                     }
-                    className="text-xs"
+                    disabled={expenseFieldsLocked}
+                    className={
+                      expenseFieldsLocked
+                        ? LOCKED_INPUT_CLASS
+                        : EDITABLE_INPUT_CLASS
+                    }
                     data-ocid="loading_trips.hsd_amount.input"
                   />
                 </div>
@@ -970,59 +1278,65 @@ export default function LoadingTripsPage({
                   <Label htmlFor="lt-bunk" className="text-xs">
                     Petrol Bunk Name
                   </Label>
-                  <div className="relative">
-                    <Input
-                      id="lt-bunk"
-                      placeholder="e.g. HP Petrol Bunk"
-                      value={form.petrolBunkName}
-                      onChange={(e) => {
-                        setForm((p) => ({
-                          ...p,
-                          petrolBunkName: e.target.value,
-                        }));
-                        setBunkDropdownOpen(true);
-                      }}
-                      onFocus={() => setBunkDropdownOpen(true)}
-                      onBlur={() =>
-                        setTimeout(() => setBunkDropdownOpen(false), 150)
-                      }
-                      className="text-xs"
-                      data-ocid="loading_trips.bunk.input"
-                    />
-                    {bunkDropdownOpen &&
-                      form.petrolBunkName &&
-                      petrolBunks.filter((b) =>
-                        b.bunkName
-                          .toLowerCase()
-                          .includes(form.petrolBunkName.toLowerCase()),
-                      ).length > 0 && (
-                        <div className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-popover shadow-lg max-h-36 overflow-y-auto">
-                          {petrolBunks
-                            .filter((b) =>
-                              b.bunkName
-                                .toLowerCase()
-                                .includes(form.petrolBunkName.toLowerCase()),
-                            )
-                            .slice(0, 6)
-                            .map((b) => (
-                              <button
-                                key={b.id.toString()}
-                                type="button"
-                                className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground cursor-pointer"
-                                onMouseDown={() => {
-                                  setForm((p) => ({
-                                    ...p,
-                                    petrolBunkName: b.bunkName,
-                                  }));
-                                  setBunkDropdownOpen(false);
-                                }}
-                              >
-                                {b.bunkName}
-                              </button>
-                            ))}
-                        </div>
-                      )}
-                  </div>
+                  {expenseFieldsLocked ? (
+                    <div className="flex h-9 items-center rounded-md border border-input bg-gray-100 px-3 text-xs text-gray-500 cursor-not-allowed opacity-80">
+                      {form.petrolBunkName || "—"}
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Input
+                        id="lt-bunk"
+                        placeholder="e.g. HP Petrol Bunk"
+                        value={form.petrolBunkName}
+                        onChange={(e) => {
+                          setForm((p) => ({
+                            ...p,
+                            petrolBunkName: e.target.value,
+                          }));
+                          setBunkDropdownOpen(true);
+                        }}
+                        onFocus={() => setBunkDropdownOpen(true)}
+                        onBlur={() =>
+                          setTimeout(() => setBunkDropdownOpen(false), 150)
+                        }
+                        className="text-xs"
+                        data-ocid="loading_trips.bunk.input"
+                      />
+                      {bunkDropdownOpen &&
+                        form.petrolBunkName &&
+                        petrolBunks.filter((b) =>
+                          b.bunkName
+                            .toLowerCase()
+                            .includes(form.petrolBunkName.toLowerCase()),
+                        ).length > 0 && (
+                          <div className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-popover shadow-lg max-h-36 overflow-y-auto">
+                            {petrolBunks
+                              .filter((b) =>
+                                b.bunkName
+                                  .toLowerCase()
+                                  .includes(form.petrolBunkName.toLowerCase()),
+                              )
+                              .slice(0, 6)
+                              .map((b) => (
+                                <button
+                                  key={b.id.toString()}
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                                  onMouseDown={() => {
+                                    setForm((p) => ({
+                                      ...p,
+                                      petrolBunkName: b.bunkName,
+                                    }));
+                                    setBunkDropdownOpen(false);
+                                  }}
+                                >
+                                  {b.bunkName}
+                                </button>
+                              ))}
+                          </div>
+                        )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1041,9 +1355,11 @@ export default function LoadingTripsPage({
                 type="submit"
                 disabled={
                   isSaving ||
-                  !form.vehicleId ||
-                  !form.consignerId ||
-                  !form.consigneeId
+                  (!keyFieldsLocked &&
+                    (!form.vehicleId ||
+                      !form.consignerId ||
+                      !form.consigneeId)) ||
+                  (isDOExpired && userRole !== "Admin")
                 }
                 className="text-xs"
                 data-ocid="loading_trips.submit_button"
@@ -1110,6 +1426,7 @@ export default function LoadingTripsPage({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
       {/* Quick Add Vehicle Dialog */}
       <Dialog open={quickAddVehicleOpen} onOpenChange={setQuickAddVehicleOpen}>
         <DialogContent className="max-w-sm">

@@ -27,7 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Pencil, Plus, Receipt, Trash2 } from "lucide-react";
+import { Loader2, Lock, Pencil, Plus, Receipt, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -829,6 +829,9 @@ export default function TDSPage() {
                       <TableRow
                         key={record.id.toString()}
                         data-ocid={`tds.tds_receivable.item.${index + 1}`}
+                        className={
+                          record.status === "received" ? "bg-blue-50/30" : ""
+                        }
                       >
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                           {formatDate(record.entryDate)}
@@ -863,26 +866,45 @@ export default function TDSPage() {
                           {record.remarks || "-"}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openTrDialog(record)}
-                              className="h-7 w-7 p-0"
-                              data-ocid={`tds.tds_receivable.edit_button.${index + 1}`}
+                          {record.status === "received" ? (
+                            <div
+                              className="flex items-center justify-end gap-1"
+                              title="Auto-recorded from Receivable payment — modify via Accounts Receivable"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setDeleteConfirm(record)}
-                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                              data-ocid={`tds.tds_receivable.delete_button.${index + 1}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
+                              <span
+                                className="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium border"
+                                style={{
+                                  background: "oklch(0.97 0.02 240)",
+                                  color: "oklch(0.4 0.18 240)",
+                                  borderColor: "oklch(0.75 0.1 240)",
+                                }}
+                              >
+                                <Lock className="h-2.5 w-2.5" />
+                                Auto
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openTrDialog(record)}
+                                className="h-7 w-7 p-0"
+                                data-ocid={`tds.tds_receivable.edit_button.${index + 1}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setDeleteConfirm(record)}
+                                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                data-ocid={`tds.tds_receivable.delete_button.${index + 1}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

@@ -90,7 +90,7 @@ export const T = IDL.Record({
 export const UserProfile = IDL.Record({ 'name' : IDL.Text });
 
 export const idlService = IDL.Service({
-  '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
+  '_initializeAccessControl' : IDL.Func([], [], []),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
   'createClient' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
   'createDieselEntry' : IDL.Func(
@@ -146,6 +146,7 @@ export const idlService = IDL.Service({
     ),
   'createTruck' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
   'deleteClient' : IDL.Func([IDL.Nat], [], []),
+  'deleteData' : IDL.Func([IDL.Text], [], []),
   'deleteDieselEntry' : IDL.Func([IDL.Nat], [], []),
   'deleteInvoice' : IDL.Func([IDL.Nat], [], []),
   'deletePayment' : IDL.Func([IDL.Nat], [], []),
@@ -156,6 +157,7 @@ export const idlService = IDL.Service({
   'getAllClients' : IDL.Func([], [IDL.Vec(T__7)], ['query']),
   'getAllDieselEntries' : IDL.Func([], [IDL.Vec(T__6)], ['query']),
   'getAllInvoices' : IDL.Func([], [IDL.Vec(T__5)], ['query']),
+  'getAllKeys' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
   'getAllPayments' : IDL.Func([], [IDL.Vec(T__4)], ['query']),
   'getAllPettyCashEntries' : IDL.Func([], [IDL.Vec(T__3)], ['query']),
   'getAllTDSEntries' : IDL.Func([], [IDL.Vec(T__2)], ['query']),
@@ -164,6 +166,7 @@ export const idlService = IDL.Service({
   'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
   'getClient' : IDL.Func([IDL.Nat], [T__7], ['query']),
+  'getData' : IDL.Func([IDL.Text], [IDL.Opt(IDL.Text)], ['query']),
   'getDieselEntry' : IDL.Func([IDL.Nat], [T__6], ['query']),
   'getInvoice' : IDL.Func([IDL.Nat], [T__5], ['query']),
   'getPayment' : IDL.Func([IDL.Nat], [T__4], ['query']),
@@ -178,6 +181,7 @@ export const idlService = IDL.Service({
     ),
   'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
   'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+  'setData' : IDL.Func([IDL.Text, IDL.Text], [], []),
   'updateClient' : IDL.Func([IDL.Nat, IDL.Text, IDL.Text, IDL.Text], [], []),
   'updateDieselEntry' : IDL.Func(
       [
@@ -344,7 +348,7 @@ export const idlFactory = ({ IDL }) => {
   const UserProfile = IDL.Record({ 'name' : IDL.Text });
   
   return IDL.Service({
-    '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
+    '_initializeAccessControl' : IDL.Func([], [], []),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
     'createClient' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
     'createDieselEntry' : IDL.Func(
@@ -400,6 +404,7 @@ export const idlFactory = ({ IDL }) => {
       ),
     'createTruck' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
     'deleteClient' : IDL.Func([IDL.Nat], [], []),
+    'deleteData' : IDL.Func([IDL.Text], [], []),
     'deleteDieselEntry' : IDL.Func([IDL.Nat], [], []),
     'deleteInvoice' : IDL.Func([IDL.Nat], [], []),
     'deletePayment' : IDL.Func([IDL.Nat], [], []),
@@ -410,6 +415,7 @@ export const idlFactory = ({ IDL }) => {
     'getAllClients' : IDL.Func([], [IDL.Vec(T__7)], ['query']),
     'getAllDieselEntries' : IDL.Func([], [IDL.Vec(T__6)], ['query']),
     'getAllInvoices' : IDL.Func([], [IDL.Vec(T__5)], ['query']),
+    'getAllKeys' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
     'getAllPayments' : IDL.Func([], [IDL.Vec(T__4)], ['query']),
     'getAllPettyCashEntries' : IDL.Func([], [IDL.Vec(T__3)], ['query']),
     'getAllTDSEntries' : IDL.Func([], [IDL.Vec(T__2)], ['query']),
@@ -418,6 +424,7 @@ export const idlFactory = ({ IDL }) => {
     'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
     'getClient' : IDL.Func([IDL.Nat], [T__7], ['query']),
+    'getData' : IDL.Func([IDL.Text], [IDL.Opt(IDL.Text)], ['query']),
     'getDieselEntry' : IDL.Func([IDL.Nat], [T__6], ['query']),
     'getInvoice' : IDL.Func([IDL.Nat], [T__5], ['query']),
     'getPayment' : IDL.Func([IDL.Nat], [T__4], ['query']),
@@ -432,6 +439,7 @@ export const idlFactory = ({ IDL }) => {
       ),
     'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
     'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+    'setData' : IDL.Func([IDL.Text, IDL.Text], [], []),
     'updateClient' : IDL.Func([IDL.Nat, IDL.Text, IDL.Text, IDL.Text], [], []),
     'updateDieselEntry' : IDL.Func(
         [

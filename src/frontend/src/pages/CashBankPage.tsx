@@ -34,6 +34,7 @@ import {
   Banknote,
   Building2,
   Loader2,
+  Lock,
   Plus,
   Trash2,
   Wallet,
@@ -70,6 +71,12 @@ const BANK_CATEGORIES = [
   "TDS Payment",
   "Other",
 ];
+
+const AUTO_CATEGORIES = new Set(["Client Receipt", "Vehicle Payment"]);
+
+function isAutoEntry(entry: CashBankEntry): boolean {
+  return AUTO_CATEGORIES.has(entry.category);
+}
 
 interface EntryFormData {
   date: string;
@@ -263,7 +270,7 @@ export default function CashBankPage() {
             {entries.map((entry, index) => (
               <TableRow
                 key={entry.id.toString()}
-                className="table-row-hover"
+                className={`table-row-hover${isAutoEntry(entry) ? " bg-blue-50/20" : ""}`}
                 data-ocid={`cashbank.${book}.item.${index + 1}`}
               >
                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
@@ -282,7 +289,25 @@ export default function CashBankPage() {
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="text-xs">{entry.category}</TableCell>
+                <TableCell className="text-xs">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span>{entry.category}</span>
+                    {isAutoEntry(entry) && (
+                      <span
+                        title={`Auto-recorded from ${entry.category === "Client Receipt" ? "Accounts Receivable" : "Accounts Payable"} — modify via source module`}
+                        className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium border"
+                        style={{
+                          background: "oklch(0.97 0.02 240)",
+                          color: "oklch(0.4 0.18 240)",
+                          borderColor: "oklch(0.75 0.1 240)",
+                        }}
+                      >
+                        <Lock className="h-2.5 w-2.5" />
+                        Auto
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
                 {book === "bank" && (
                   <TableCell className="text-xs text-muted-foreground">
                     {entry.bankAccountName || "—"}
@@ -304,15 +329,34 @@ export default function CashBankPage() {
                   {entry.createdBy}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeleteConfirm(entry)}
-                    className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                    data-ocid={`cashbank.${book}.delete_button.${index + 1}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  {isAutoEntry(entry) ? (
+                    <div
+                      className="flex items-center justify-end gap-1"
+                      title={`Auto-recorded from ${entry.category === "Client Receipt" ? "Receivable" : "Payable"} payment — modify via the source module`}
+                    >
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium border"
+                        style={{
+                          background: "oklch(0.97 0.02 240)",
+                          color: "oklch(0.4 0.18 240)",
+                          borderColor: "oklch(0.75 0.1 240)",
+                        }}
+                      >
+                        <Lock className="h-2.5 w-2.5" />
+                        Auto
+                      </span>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeleteConfirm(entry)}
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                      data-ocid={`cashbank.${book}.delete_button.${index + 1}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

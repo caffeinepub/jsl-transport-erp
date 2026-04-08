@@ -172,7 +172,7 @@ export enum UserRole {
     guest = "guest"
 }
 export interface backendInterface {
-    _initializeAccessControlWithSecret(userSecret: string): Promise<void>;
+    _initializeAccessControl(): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
     createClient(clientName: string, gstNumber: string, address: string): Promise<bigint>;
     createDieselEntry(truckId: bigint, date: string, vendor: string, litre: number, rate: number, total: number): Promise<bigint>;
@@ -183,6 +183,7 @@ export interface backendInterface {
     createTrip(challanNo: string, truckId: bigint, clientId: bigint, tpNo: string, doNo: string, consigner: string, consignee: string, loadingDate: string, loadingQty: number, unloadingQty: number, associateType: string, createdBy: string): Promise<bigint>;
     createTruck(truckNumber: string, ownerName: string, phone: string): Promise<bigint>;
     deleteClient(id: bigint): Promise<void>;
+    deleteData(key: string): Promise<void>;
     deleteDieselEntry(id: bigint): Promise<void>;
     deleteInvoice(id: bigint): Promise<void>;
     deletePayment(id: bigint): Promise<void>;
@@ -193,6 +194,7 @@ export interface backendInterface {
     getAllClients(): Promise<Array<T__7>>;
     getAllDieselEntries(): Promise<Array<T__6>>;
     getAllInvoices(): Promise<Array<T__5>>;
+    getAllKeys(): Promise<Array<string>>;
     getAllPayments(): Promise<Array<T__4>>;
     getAllPettyCashEntries(): Promise<Array<T__3>>;
     getAllTDSEntries(): Promise<Array<T__2>>;
@@ -201,6 +203,7 @@ export interface backendInterface {
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
     getClient(id: bigint): Promise<T__7>;
+    getData(key: string): Promise<string | null>;
     getDieselEntry(id: bigint): Promise<T__6>;
     getInvoice(id: bigint): Promise<T__5>;
     getPayment(id: bigint): Promise<T__4>;
@@ -211,6 +214,7 @@ export interface backendInterface {
     getUserProfile(user: Principal): Promise<UserProfile | null>;
     isCallerAdmin(): Promise<boolean>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    setData(key: string, value: string): Promise<void>;
     updateClient(id: bigint, clientName: string, gstNumber: string, address: string): Promise<void>;
     updateDieselEntry(id: bigint, truckId: bigint, date: string, vendor: string, litre: number, rate: number, total: number): Promise<void>;
     updateInvoice(id: bigint, tripId: bigint, rate: number, billingAmount: number, gstPercent: number, gstAmount: number, totalInvoice: number, status: string): Promise<void>;
@@ -223,17 +227,17 @@ export interface backendInterface {
 import type { UserProfile as _UserProfile, UserRole as _UserRole } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
-    async _initializeAccessControlWithSecret(arg0: string): Promise<void> {
+    async _initializeAccessControl(): Promise<void> {
         if (this.processError) {
             try {
-                const result = await this.actor._initializeAccessControlWithSecret(arg0);
+                const result = await this.actor._initializeAccessControl();
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor._initializeAccessControlWithSecret(arg0);
+            const result = await this.actor._initializeAccessControl();
             return result;
         }
     }
@@ -377,6 +381,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async deleteData(arg0: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.deleteData(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.deleteData(arg0);
+            return result;
+        }
+    }
     async deleteDieselEntry(arg0: bigint): Promise<void> {
         if (this.processError) {
             try {
@@ -517,6 +535,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async getAllKeys(): Promise<Array<string>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getAllKeys();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getAllKeys();
+            return result;
+        }
+    }
     async getAllPayments(): Promise<Array<T__4>> {
         if (this.processError) {
             try {
@@ -627,6 +659,20 @@ export class Backend implements backendInterface {
         } else {
             const result = await this.actor.getClient(arg0);
             return result;
+        }
+    }
+    async getData(arg0: string): Promise<string | null> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getData(arg0);
+                return from_candid_opt_n6(this._uploadFile, this._downloadFile, result);
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getData(arg0);
+            return from_candid_opt_n6(this._uploadFile, this._downloadFile, result);
         }
     }
     async getDieselEntry(arg0: bigint): Promise<T__6> {
@@ -769,6 +815,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async setData(arg0: string, arg1: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.setData(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.setData(arg0, arg1);
+            return result;
+        }
+    }
     async updateClient(arg0: bigint, arg1: string, arg2: string, arg3: string): Promise<void> {
         if (this.processError) {
             try {
@@ -886,6 +946,9 @@ function from_candid_UserRole_n4(_uploadFile: (file: ExternalBlob) => Promise<Ui
     return from_candid_variant_n5(_uploadFile, _downloadFile, value);
 }
 function from_candid_opt_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_UserProfile]): UserProfile | null {
+    return value.length === 0 ? null : value[0];
+}
+function from_candid_opt_n6(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [string]): string | null {
     return value.length === 0 ? null : value[0];
 }
 function from_candid_variant_n5(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {

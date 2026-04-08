@@ -36,6 +36,7 @@ import {
   FileText,
   Filter,
   IndianRupee,
+  Info,
   Loader2,
   Pencil,
   Plus,
@@ -317,6 +318,40 @@ export default function BillingPage() {
     const totalAmount = subtotal + gstAmount;
     return { subtotal, gstAmount, totalAmount };
   }, [selectedLineItems, form.gstRate]);
+
+  // Rate trace: collect rates per DO linked to selected trips for display in Step 2
+  const rateTraceInfo = useMemo(() => {
+    if (form.selectedUnloadingIds.length === 0) return null;
+    // Collect unique DO numbers from selected trips
+    const doNumbers = new Set<string>();
+    let singleBillingRate: number | null = null;
+    let ratesVary = false;
+    for (const uid of form.selectedUnloadingIds) {
+      const ul = unloadings.find(
+        (u) => u.id.toString() === uid || Number(u.id) === Number(uid),
+      );
+      if (!ul) continue;
+      const trip = trips.find(
+        (t) =>
+          t.id === ul.loadingTripId ||
+          Number(t.id) === Number(ul.loadingTripId),
+      );
+      if (trip?.doId && trip.doId !== 0n) {
+        doNumbers.add(trip.doId.toString());
+      }
+      const bRate = Number(ul.billingRate) || 0;
+      if (singleBillingRate === null) singleBillingRate = bRate;
+      else if (singleBillingRate !== bRate) ratesVary = true;
+    }
+    const multipleDOs = doNumbers.size > 1;
+    return {
+      multipleDOs,
+      ratesVary,
+      billingRate: ratesVary ? null : singleBillingRate,
+      gstRate: Number(form.gstRate) || 0,
+      doCount: doNumbers.size,
+    };
+  }, [form.selectedUnloadingIds, form.gstRate, unloadings, trips]);
 
   const summaryCards = useMemo(() => {
     const totalBilled = invoices.reduce((s, i) => s + i.totalAmount, 0);
@@ -2186,6 +2221,83 @@ export default function BillingPage() {
                       {form.consignerName || "—"}
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* Rates Applied info card */}
+              {rateTraceInfo && (
+                <div
+                  className="rounded-md border px-3 py-2.5 space-y-2"
+                  style={{
+                    background: "oklch(0.97 0.02 240)",
+                    borderColor: "oklch(0.75 0.12 240)",
+                  }}
+                  data-ocid="billing.rates_applied.panel"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Info
+                      className="h-3.5 w-3.5 shrink-0"
+                      style={{ color: "oklch(0.45 0.18 240)" }}
+                    />
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wide"
+                      style={{ color: "oklch(0.45 0.18 240)" }}
+                    >
+                      Rates Applied
+                    </span>
+                  </div>
+                  {rateTraceInfo.multipleDOs || rateTraceInfo.ratesVary ? (
+                    <p
+                      className="text-xs italic"
+                      style={{ color: "oklch(0.5 0.14 240)" }}
+                    >
+                      Multiple DOs selected — rates vary by trip. Check
+                      individual line items in the calculation below.
+                    </p>
+                  ) : (
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr
+                          className="text-[10px] uppercase tracking-wide"
+                          style={{ color: "oklch(0.5 0.1 240)" }}
+                        >
+                          <th className="text-left pb-1 font-semibold">
+                            Rate Type
+                          </th>
+                          <th className="text-right pb-1 font-semibold">
+                            Amount
+                          </th>
+                          <th className="text-right pb-1 font-semibold">
+                            Source
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t border-blue-100">
+                          <td className="py-1 font-medium">Billing Rate</td>
+                          <td className="py-1 text-right tabular-nums">
+                            ₹
+                            {(rateTraceInfo.billingRate ?? 0).toLocaleString(
+                              "en-IN",
+                            )}
+                            /MT
+                          </td>
+                          <td className="py-1 text-right text-muted-foreground">
+                            from unloading record
+                          </td>
+                        </tr>
+                        <tr className="border-t border-blue-100">
+                          <td className="py-1 font-medium">GST Rate</td>
+                          <td className="py-1 text-right tabular-nums">
+                            {rateTraceInfo.gstRate}%
+                          </td>
+                          <td className="py-1 text-right text-muted-foreground">
+                            applied on subtotal
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               )}
             </div>
